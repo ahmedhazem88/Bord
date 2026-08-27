@@ -1,0 +1,71 @@
+/* Design tokens — PRD section 4. Apple HIG-inspired: one accent color used
+   sparingly, flat surfaces, hairline dividers, restrained status language. */
+:root {
+  --color-ink: #1d1d1f;
+  --color-subtle: #6e6e73;
+  --color-accent: #0071e3;
+  --color-hairline: #d2d2d7;
+  --color-surface: #f5f5f7;
+  --color-background: #ffffff;
+
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --space-5: 40px;
+
+  --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-ink: #f5f5f7;
+    --color-subtle: #98989d;
+    --color-accent: #2997ff;
+    --color-hairline: #424245;
+    --color-surface: #1d1d1f;
+    --color-background: #000000;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-ink);
+  font-family: var(--font-family);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 700;
+  margin: 0 0 var(--space-2) 0;
+}
+
+h1 {
+  font-size: 30px;
+}
+h2 {
+  font-size: 24px;
+}
+h3 {
+  font-size: 18px;
+}
+
+a {
+  color: var(--color-accent);
+}

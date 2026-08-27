@@ -1,0 +1,169 @@
+.app-shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-3);
+}
+
+.top-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.top-nav-links {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.top-nav-links a {
+  color: var(--color-ink);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.top-nav-links a:hover {
+  color: var(--color-accent);
+}
+
+.card {
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.callout {
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.callout-label {
+  color: var(--color-accent);
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.hairline-divider {
+  border: none;
+  border-top: 1px solid var(--color-hairline);
+  margin: var(--space-3) 0;
+}
+
+table.flat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+table.flat-table thead tr {
+  background: var(--color-surface);
+}
+
+table.flat-table th,
+table.flat-table td {
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+table.flat-table th {
+  font-weight: 600;
+  color: var(--color-subtle);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-accent);
+}
+
+.status-label.status-blocking {
+  color: #d70015;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.btn {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  background: var(--color-accent);
+  color: white;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--color-accent);
+  border: 1px solid var(--color-hairline);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--space-2);
+}
+
+.field label {
+  font-size: 13px;
+  color: var(--color-subtle);
+}
+
+.field input,
+.field select {
+  font-family: inherit;
+  font-size: 15px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-hairline);
+  background: var(--color-background);
+  color: var(--color-ink);
+}
+
+.subtle {
+  color: var(--color-subtle);
+  font-size: 13px;
+}
+
+.error-text {
+  color: #d70015;
+  font-size: 13px;
+}
+
+.centered-page {
+  display: flex;
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-card {
+  width: 360px;
+}
