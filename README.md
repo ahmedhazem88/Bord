@@ -64,19 +64,43 @@ This is the Phase 1 architectural foundation, built in build-sequence order (PRD
   professional-network profile into an entity's governance structure creates a real proposed agenda
   item that, once the Secretary confirms it, auto-creates the DRAFT appointment resolution the board
   votes on — the same appointment path as any other, not a side channel.
-- **Scaffolded, not complete**: Regulatory Change Monitoring's scheduled scan (Epic 7 — no job
-  scheduler exists, so alerts are pull/computed, not pushed — see `src/compliance/routes.ts`),
-  Remuneration & Payouts (Epic 8 — no cap auto-calculation from financials), Document Management &
-  E-Signature (Epic 10 — no object-storage or CSP integration). No frontend screens yet for the
-  new Epic 5/6/7 endpoints (voting, minutes directory, compliance search) or for the agenda
-  preparation tool, governing-documents library, and minutes circulation/verification described
-  above — all API-only so far, verified via a live end-to-end smoke test rather than a UI.
-  Off-agenda-item blocking + 100%-unanimous-addition override and virtual-attendance
-  recording-retention enforcement are also not built. Each module's source file says explicitly
-  what's built vs. deferred.
-- **Not started**: e-signature CSP integration, encrypted object storage, PDPL compliance
-  paperwork (DPO registration, processing license, DPIA — these are organizational/legal steps,
-  not code).
+- **Gap-audit remediation** (checked against the actual MVP spec/PRD documents, not a
+  paraphrase — see commit history from "Fix three confirmed spec violations..." onward): fixed
+  three active correctness bugs (MFA was mandatory only for Chairman/Compliance Officer/Platform
+  Admin instead of every user; a Chairman/MD-separation check that could never fire; a `/pass`
+  endpoint that let a meeting-bound resolution be force-passed with zero votes cast); closed the
+  Epic 2 gap where verification documents were unvalidated free text (now a real checklist enum
+  gating approval); closed the Epic 3 gap where mandatory committee types, non-executive-chair,
+  and minimum-independent-count were unenforced. Epic 5 gained everything the audit found
+  genuinely missing and buildable without an external integration: an `AUDITOR` role (previously
+  didn't exist at all) with its specific OGM convocation right; off-agenda-item blocking with both
+  override paths (Chairman's mid-meeting flag, 100%-unanimous addition); majority-by-resolution-type
+  derivation (was a free-text field a caller could set to anything — a capital-reduction resolution
+  could legally pass by simple majority); GA meeting roles (secretary + two vote counters, appointed
+  by the Chairman); proxy grant/revoke/vote-as-proxy (JSC vs. LLC eligibility via the new
+  `Entity.legalForm`, the non-board-shareholder-can't-proxy-to-a-board-member rule); and cumulative
+  voting for board elections (its own module, `src/elections/`, since it's a genuinely different
+  voting mechanism from the FOR/AGAINST/ABSTAIN/RECUSED Resolution model). Also fixed a real bug
+  found while testing this: `requireCapability` checked only one arbitrarily-chosen capacity when a
+  person held more than one at the same entity, instead of checking the grant across all of them.
+- **Scaffolded, not complete**: Regulatory Calendar (Epic 6) and the Interest Registry half of
+  Compliance Guardrails (Epic 9) — the data model, escalation math, and statutory-vs-override
+  resolution machinery are real, but nothing seeds a `RegulatoryObligation` row for a live entity,
+  there's no job scheduler (alerts are pull/computed, not pushed — see `src/compliance/routes.ts`),
+  and `InterestDeclaration` has no creation/reconfirmation/agenda-matching wiring at all yet.
+  Regulatory Change Monitoring's scheduled scan (Epic 7), Remuneration & Payouts' cap
+  auto-calculation from financials (Epic 8), and Document Management's object storage (Epic 10) are
+  likewise unbuilt. No frontend screens yet for the Epic 5/6/7 endpoints (voting, minutes directory,
+  compliance search, elections) or for the agenda preparation tool, governing-documents library, and
+  minutes circulation/verification — all API-only so far, verified via live end-to-end smoke tests
+  rather than a UI. Virtual-attendance recording-retention enforcement, and the OGM/EGM invitation
+  mechanics (newspaper publication, registered mail, GAFI/FRA copies, the 21-day notice window) are
+  also not built — the latter needs a real decision on the entity's actual operational process, not
+  just code. Each module's source file says explicitly what's built vs. deferred.
+- **Not started**: e-signature CSP integration (minutes "signing" today is an in-app timestamp, not
+  a cryptographic signature — the spec is explicit that the platform must never issue its own),
+  encrypted object storage / KMS, PDPL compliance paperwork (DPO registration, processing license,
+  DPIA — these are organizational/legal steps, not code).
 
 ## Architecture
 
