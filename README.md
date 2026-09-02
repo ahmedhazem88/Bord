@@ -17,8 +17,21 @@ This is the Phase 1 architectural foundation, built in build-sequence order (PRD
   capital + 1-month board window), a context-based live quorum calculator (board headcount vs. GA
   capital-percentage, blocking votes the instant quorum is lost mid-meeting), the four-value
   voting engine with the Art. 74 hard exclusion and capital-weighted tallying, and board/GA
-  minutes — auto-generated, dual-signed, FRA/GAFI submission tracking, and a searchable directory
-  (date range, keyword, free text); a compliance-assistant search endpoint across
+  minutes — auto-generated (from only the finalized agenda), circulated for member verification
+  (approve / request changes, blocking signature while an objection is open), dual-signed,
+  FRA/GAFI submission tracking, and a searchable directory (date range, keyword, free text); a
+  Secretary agenda-preparation tool — board/committee members propose agenda items (or submit them
+  as the initiator alongside a MeetingRequest), each automatically checked against the entity's own
+  governing documents (Articles of Association, Bylaws, Shareholders' Agreements, other agreements,
+  covenants, warrants) and applicable regulatory rules, flagging anything relevant for the
+  Secretary/Chairman to review before confirming or rejecting it onto the final agenda — plus a
+  meeting "pack" bundling the confirmed agenda, supporting documents, quorum, and roster (the
+  pull-based stand-in for "sent with the invitations," consistent with this build having no
+  push/email infrastructure). NOTE on that review: it's real, working, deterministic term-matching
+  against the entity's actual governing-document text — not a language-model call, since no LLM
+  provider credential is configured for the application to call at runtime. The function it runs
+  behind (`agenda/review.ts`) is written as the seam a real LLM-based semantic reviewer could sit
+  behind later, if a provider key is ever supplied. A compliance-assistant search endpoint across
   obligations/rules/minutes/resolutions plus a computed 30/14/3-day escalating-alerts endpoint
   (Epics 6–7); a working React frontend for the earlier (Epic 1–3) flows; a public professional
   network (PRD roadmap Phase 4, brought forward) — opt-in public profiles for professionals and
@@ -31,7 +44,9 @@ This is the Phase 1 architectural foundation, built in build-sequence order (PRD
   scheduler exists, so alerts are pull/computed, not pushed — see `src/compliance/routes.ts`),
   Remuneration & Payouts (Epic 8 — no cap auto-calculation from financials), Document Management &
   E-Signature (Epic 10 — no object-storage or CSP integration). No frontend screens yet for the
-  new Epic 5/6/7 endpoints (voting, minutes directory, compliance search) — API-only so far.
+  new Epic 5/6/7 endpoints (voting, minutes directory, compliance search) or for the agenda
+  preparation tool, governing-documents library, and minutes circulation/verification described
+  above — all API-only so far, verified via a live end-to-end smoke test rather than a UI.
   Off-agenda-item blocking + 100%-unanimous-addition override and virtual-attendance
   recording-retention enforcement are also not built. Each module's source file says explicitly
   what's built vs. deferred.

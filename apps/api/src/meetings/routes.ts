@@ -7,6 +7,7 @@ import { requireCapability, requireEntityAccess } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
 import { computeQuorum, getMeetingRoster, resolveQuorumRules } from "./quorum.js";
 import { createMeetingRequest, escalateMeetingRequest, markMeetingRequestCalled, MeetingRequestError } from "./requests.js";
+import { reviewAgendaItem } from "../agenda/review.js";
 
 /**
  * Epic 5 (Meeting & Conferencing).
@@ -15,12 +16,24 @@ import { createMeetingRequest, escalateMeetingRequest, markMeetingRequestCalled,
  * blocks the meeting from staying QUORATE once attendance drops below
  * threshold, and the convocation-rights MeetingRequest workflow (1/3 board
  * threshold + 10-day Chairman window; 5%/10% GA capital threshold +
- * 1-month board window). Voting itself lives in resolutions/voting.ts,
- * since a vote is cast against a Resolution, not a Meeting.
+ * 1-month board window) — including the initiator's own submitted agenda,
+ * carried on the request and materialized into the review queue once the
+ * meeting exists. Also the Secretary's agenda-preparation tool: board/
+ * committee members propose items (agenda:propose), each auto-reviewed
+ * against the entity's governing documents and applicable regulatory rules
+ * (see agenda/review.ts), landing in a PROPOSED queue the Secretary/
+ * Chairman confirms or rejects into the final CONFIRMED agenda — plus the
+ * meeting "pack" bundling that confirmed agenda, its supporting documents,
+ * quorum, and roster (the pull-based equivalent of "sent with the
+ * invitations": this build has no push/email infrastructure). Voting itself
+ * lives in resolutions/voting.ts, since a vote is cast against a
+ * Resolution, not a Meeting.
  * NOT built yet: off-agenda-item blocking + 100%-unanimous-addition
- * override, virtual-attendance recording-retention enforcement, and
- * actually notifying GAFI/the regulator on escalation (out-of-platform act
- * — this records that the window lapsed, nothing more).
+ * override (adding an item live, mid-meeting — distinct from the
+ * pre-meeting proposal workflow above), virtual-attendance
+ * recording-retention enforcement, and actually notifying GAFI/the
+ * regulator on escalation (out-of-platform act — this records that the
+ * window lapsed, nothing more).
  */
 
 const scheduleMeetingSchema = z.object({
@@ -39,6 +52,27 @@ const addAgendaItemSchema = z.object({
   order: z.number().int().nonnegative(),
   title: z.string().min(1),
   description: z.string().optional(),
+});
+
+const proposeAgendaItemSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().optional(),
+});
+
+const confirmAgendaItemSchema = z.object({
+  order: z.number().int().nonnegative().optional(),
+});
+
+const rejectAgendaItemSchema = z.object({
+  reason: z.string().min(1),
+});
+
+const meetingRequestSchema = z.object({
+  type: z.enum(["BOARD", "OGM", "EGM"]),
+  requestorCapacityIds: z.array(z.string()).min(1),
+  // The initiator's own agenda, submitted alongside the request — see
+  // MeetingRequest.proposedAgenda.
+  proposedAgenda: z.array(z.object({ title: z.string().min(1), description: z.string().optional() })).optional(),
 });
 
 const rsvpSchema = z.object({
@@ -84,6 +118,9 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
     return reply.send(meetings);
   });
 
+  // Set directly by the Secretary/Chairman/VC/MD — already final, so it's
+  // CONFIRMED and self-reviewed immediately, unlike a board member's
+  // agenda:propose submission below.
   app.post(
     "/entities/:entityId/meetings/:meetingId/agenda-items",
     { preHandler: [app.authenticate, requireCapability("agenda:set")] },
@@ -92,14 +129,25 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
       const body = addAgendaItemSchema.parse(request.body);
 
       const item = await withTenantContext(entityId, async (tx) => {
-        const created = await tx.agendaItem.create({ data: { meetingId, ...body } });
+        const complianceFlags = await reviewAgendaItem(tx, entityId, body.title, body.description);
+        const created = await tx.agendaItem.create({
+          data: {
+            meetingId,
+            ...body,
+            status: "CONFIRMED",
+            reviewedByUserId: request.user.sub,
+            reviewedAt: new Date(),
+            complianceFlags: complianceFlags as unknown as Prisma.InputJsonValue,
+            complianceReviewedAt: new Date(),
+          },
+        });
         await appendAuditLog(tx, {
           entityId,
           actorUserId: request.user.sub,
           action: "AGENDA_ITEM_ADDED",
           tableName: "AgendaItem",
           recordId: created.id,
-          afterData: body,
+          afterData: { ...body, flagCount: complianceFlags.length },
         });
         return created;
       });
@@ -108,10 +156,170 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
     },
   );
 
+  // Secretary's agenda-preparation tool, part 1: any board/committee member
+  // holding agenda:propose can submit an item for the Secretary/Chairman to
+  // review — it lands PROPOSED, not on the agenda yet. Order is assigned
+  // provisionally (appended to the end); confirm can reorder.
+  app.post(
+    "/entities/:entityId/meetings/:meetingId/agenda-items/propose",
+    { preHandler: [app.authenticate, requireCapability("agenda:propose")] },
+    async (request, reply) => {
+      const { entityId, meetingId } = request.params as { entityId: string; meetingId: string };
+      const body = proposeAgendaItemSchema.parse(request.body);
+
+      const item = await withTenantContext(entityId, async (tx) => {
+        const proposerCapacity = await tx.capacity.findFirst({
+          where: { userId: request.user.sub, entityId, active: true, verificationStatus: "APPROVED" },
+          select: { id: true },
+        });
+        const maxOrder = await tx.agendaItem.aggregate({ where: { meetingId }, _max: { order: true } });
+        const complianceFlags = await reviewAgendaItem(tx, entityId, body.title, body.description);
+
+        const created = await tx.agendaItem.create({
+          data: {
+            meetingId,
+            order: (maxOrder._max.order ?? -1) + 1,
+            title: body.title,
+            description: body.description,
+            status: "PROPOSED",
+            proposedByCapacityId: proposerCapacity?.id,
+            complianceFlags: complianceFlags as unknown as Prisma.InputJsonValue,
+            complianceReviewedAt: new Date(),
+          },
+        });
+        await appendAuditLog(tx, {
+          entityId,
+          actorUserId: request.user.sub,
+          action: "AGENDA_ITEM_PROPOSED",
+          tableName: "AgendaItem",
+          recordId: created.id,
+          afterData: { title: body.title, flagCount: complianceFlags.length },
+        });
+        return created;
+      });
+
+      return reply.code(201).send(item);
+    },
+  );
+
+  // Secretary's agenda-preparation tool, part 2: the review queue — every
+  // PROPOSED item (from agenda:propose or materialized from a
+  // MeetingRequest's initiator agenda), with its compliance flags, for the
+  // Secretary/Chairman to confirm or reject before the meeting.
+  app.get(
+    "/entities/:entityId/meetings/:meetingId/agenda-items/pending-review",
+    { preHandler: [app.authenticate, requireCapability("agenda:set")] },
+    async (request, reply) => {
+      const { entityId, meetingId } = request.params as { entityId: string; meetingId: string };
+      const items = await withTenantContext(entityId, (tx) =>
+        tx.agendaItem.findMany({
+          where: { meetingId, status: "PROPOSED" },
+          include: { proposedByCapacity: { include: { user: { select: { fullName: true } } } } },
+          orderBy: { createdAt: "asc" },
+        }),
+      );
+      return reply.send(items);
+    },
+  );
+
+  app.post(
+    "/entities/:entityId/meetings/:meetingId/agenda-items/:itemId/confirm",
+    { preHandler: [app.authenticate, requireCapability("agenda:set")] },
+    async (request, reply) => {
+      const { entityId, itemId } = request.params as { entityId: string; itemId: string };
+      const body = confirmAgendaItemSchema.parse(request.body);
+
+      const item = await withTenantContext(entityId, async (tx) => {
+        const updated = await tx.agendaItem.update({
+          where: { id: itemId },
+          data: { status: "CONFIRMED", order: body.order, reviewedByUserId: request.user.sub, reviewedAt: new Date() },
+        });
+        await appendAuditLog(tx, { entityId, actorUserId: request.user.sub, action: "AGENDA_ITEM_CONFIRMED", tableName: "AgendaItem", recordId: itemId });
+        return updated;
+      });
+
+      return reply.send(item);
+    },
+  );
+
+  app.post(
+    "/entities/:entityId/meetings/:meetingId/agenda-items/:itemId/reject",
+    { preHandler: [app.authenticate, requireCapability("agenda:set")] },
+    async (request, reply) => {
+      const { entityId, itemId } = request.params as { entityId: string; itemId: string };
+      const body = rejectAgendaItemSchema.parse(request.body);
+
+      const item = await withTenantContext(entityId, async (tx) => {
+        const updated = await tx.agendaItem.update({
+          where: { id: itemId },
+          data: { status: "REJECTED", rejectionReason: body.reason, reviewedByUserId: request.user.sub, reviewedAt: new Date() },
+        });
+        await appendAuditLog(tx, {
+          entityId,
+          actorUserId: request.user.sub,
+          action: "AGENDA_ITEM_REJECTED",
+          tableName: "AgendaItem",
+          recordId: itemId,
+          afterData: { reason: body.reason },
+        });
+        return updated;
+      });
+
+      return reply.send(item);
+    },
+  );
+
+  // Re-runs the compliance review on demand — e.g. after a new
+  // GoverningDocument is added, or a RegulatoryRule changes. Read-mostly
+  // (only refreshes the cached flag list), so any entity member can trigger it.
+  app.post(
+    "/entities/:entityId/meetings/:meetingId/agenda-items/:itemId/review",
+    { preHandler: [app.authenticate, requireEntityAccess()] },
+    async (request, reply) => {
+      const { entityId, itemId } = request.params as { entityId: string; itemId: string };
+      const result = await withTenantContext(entityId, async (tx) => {
+        const item = await tx.agendaItem.findUniqueOrThrow({ where: { id: itemId } });
+        const complianceFlags = await reviewAgendaItem(tx, entityId, item.title, item.description);
+        return tx.agendaItem.update({
+          where: { id: itemId },
+          data: { complianceFlags: complianceFlags as unknown as Prisma.InputJsonValue, complianceReviewedAt: new Date() },
+        });
+      });
+      return reply.send(result);
+    },
+  );
+
   app.get("/entities/:entityId/meetings/:meetingId/agenda-items", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId, meetingId } = request.params as { entityId: string; meetingId: string };
     const items = await withTenantContext(entityId, (tx) => tx.agendaItem.findMany({ where: { meetingId }, orderBy: { order: "asc" } }));
     return reply.send(items);
+  });
+
+  // The "sent out with the invitations" bundle — everything an invited
+  // member needs before the meeting: the finalized (CONFIRMED) agenda with
+  // its compliance flags and attached supporting documents, plus live
+  // quorum status and the attendance roster. Pull-based, not pushed (this
+  // build has no email/push infrastructure — see compliance/routes.ts for
+  // the same limitation elsewhere): a member fetches this once notified
+  // out-of-band that the meeting was scheduled.
+  app.get("/entities/:entityId/meetings/:meetingId/pack", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
+    const { entityId, meetingId } = request.params as { entityId: string; meetingId: string };
+
+    const pack = await withTenantContext(entityId, async (tx) => {
+      const [meeting, agendaItems, quorum, attendance] = await Promise.all([
+        tx.meeting.findUniqueOrThrow({ where: { id: meetingId } }),
+        tx.agendaItem.findMany({
+          where: { meetingId, status: "CONFIRMED" },
+          include: { documents: true },
+          orderBy: { order: "asc" },
+        }),
+        computeMeetingQuorum(tx, entityId, meetingId),
+        tx.meetingAttendance.findMany({ where: { meetingId }, include: { capacity: { include: { user: { select: { fullName: true } } } } } }),
+      ]);
+      return { meeting, agendaItems, quorum, attendance };
+    });
+
+    return reply.send(pack);
   });
 
   // Live, context-based quorum status — Epic 5 AC.
@@ -186,9 +394,7 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
 
   app.post("/entities/:entityId/meeting-requests", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
-    const body = z
-      .object({ type: z.enum(["BOARD", "OGM", "EGM"]), requestorCapacityIds: z.array(z.string()).min(1) })
-      .parse(request.body);
+    const body = meetingRequestSchema.parse(request.body);
 
     try {
       const result = await withTenantContext(entityId, async (tx) => {
@@ -200,7 +406,12 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
         if (!callerCapacity || !can(callerCapacity.role as GovernanceRole, requiredAction)) {
           throw new MeetingRequestError(`role does not grant '${requiredAction}' at this entity`, 403);
         }
-        return createMeetingRequest(tx, entityId, { type: body.type, requestorCapacityIds: body.requestorCapacityIds, actorUserId: request.user.sub });
+        return createMeetingRequest(tx, entityId, {
+          type: body.type,
+          requestorCapacityIds: body.requestorCapacityIds,
+          actorUserId: request.user.sub,
+          proposedAgenda: body.proposedAgenda,
+        });
       });
       return reply.code(201).send(result);
     } catch (error) {
@@ -222,7 +433,37 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
       const { entityId, requestId } = request.params as { entityId: string; requestId: string };
       const { meetingId } = z.object({ meetingId: z.string() }).parse(request.body);
       try {
-        const result = await withTenantContext(entityId, (tx) => markMeetingRequestCalled(tx, requestId, request.user.sub, meetingId));
+        const result = await withTenantContext(entityId, async (tx) => {
+          const updatedRequest = await markMeetingRequestCalled(tx, requestId, request.user.sub, meetingId);
+
+          // Materialize the initiator's submitted agenda (if any) into real
+          // PROPOSED AgendaItem rows now that a Meeting exists — they land
+          // in the same Secretary review queue as agenda:propose items.
+          const proposedAgenda = (updatedRequest.proposedAgenda as { title: string; description?: string }[] | null) ?? [];
+          if (proposedAgenda.length > 0) {
+            const proposerCapacityId = updatedRequest.requestorCapacityIds[0] ?? null;
+            const maxOrder = await tx.agendaItem.aggregate({ where: { meetingId }, _max: { order: true } });
+            let nextOrder = (maxOrder._max.order ?? -1) + 1;
+            for (const entry of proposedAgenda) {
+              const complianceFlags = await reviewAgendaItem(tx, entityId, entry.title, entry.description);
+              await tx.agendaItem.create({
+                data: {
+                  meetingId,
+                  order: nextOrder++,
+                  title: entry.title,
+                  description: entry.description,
+                  status: "PROPOSED",
+                  proposedByCapacityId: proposerCapacityId,
+                  meetingRequestId: requestId,
+                  complianceFlags: complianceFlags as unknown as Prisma.InputJsonValue,
+                  complianceReviewedAt: new Date(),
+                },
+              });
+            }
+          }
+
+          return updatedRequest;
+        });
         return reply.send(result);
       } catch (error) {
         if (error instanceof MeetingRequestError) return reply.code(error.statusCode).send({ error: error.message });

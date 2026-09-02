@@ -39,10 +39,19 @@ async function resolveRequestThresholds(tx: Prisma.TransactionClient, entityId: 
   return thresholds;
 }
 
+export interface ProposedAgendaEntry {
+  title: string;
+  description?: string;
+}
+
 export interface CreateMeetingRequestInput {
   type: MeetingRequestType;
   requestorCapacityIds: string[];
   actorUserId: string;
+  // The initiator's own agenda — carried on the request from submission,
+  // materialized into real (PROPOSED) AgendaItem rows once the Chairman
+  // marks the request called and a Meeting exists to attach them to.
+  proposedAgenda?: ProposedAgendaEntry[];
 }
 
 /**
@@ -77,6 +86,7 @@ export async function createMeetingRequest(tx: Prisma.TransactionClient, entityI
         capitalOrMemberPct: fraction * 100,
         thresholdMet: fraction >= thresholds.boardFraction,
         responseDeadline,
+        proposedAgenda: (input.proposedAgenda as unknown as Prisma.InputJsonValue) ?? undefined,
       },
     });
     await appendAuditLog(tx, {
@@ -108,6 +118,7 @@ export async function createMeetingRequest(tx: Prisma.TransactionClient, entityI
       capitalOrMemberPct: pct,
       thresholdMet: pct >= requiredPct,
       responseDeadline,
+      proposedAgenda: (input.proposedAgenda as unknown as Prisma.InputJsonValue) ?? undefined,
     },
   });
   await appendAuditLog(tx, {

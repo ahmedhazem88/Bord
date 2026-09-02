@@ -136,6 +136,26 @@ enum MeetingRequestStatus {
   ESCALATED_TO_REGULATOR
 }
 
+// PROPOSED: submitted via agenda:propose (a board/committee member) or
+// materialized from a MeetingRequest's initiator-submitted agenda — sits in
+// the Secretary's review queue. CONFIRMED: set directly by agenda:set, or a
+// proposal the Secretary/Chairman has accepted into the final agenda.
+// REJECTED: a proposal the Secretary/Chairman declined, with a reason.
+enum AgendaItemStatus {
+  PROPOSED
+  CONFIRMED
+  REJECTED
+}
+
+enum GoverningDocumentType {
+  ARTICLES_OF_ASSOCIATION
+  BYLAWS
+  SHAREHOLDERS_AGREEMENT
+  OTHER_AGREEMENT
+  COVENANT
+  WARRANT
+}
+
 enum RemunerationPolicyType {
   BOARD
   EXECUTIVE
@@ -282,6 +302,7 @@ model Entity {
   meetingRequests      MeetingRequest[]
   auditLogEntries      AuditLog[]
   minutes              Minutes[]
+  governingDocuments   GoverningDocument[]
 
   @@index([registrationNumber])
 }
@@ -326,6 +347,8 @@ model Capacity {
   documents             Document[]     @relation("CapacityDocuments")
   boardChairOf          Board[]        @relation("BoardChair")
   meetingAttendances    MeetingAttendance[]
+  proposedAgendaItems   AgendaItem[]   @relation("ProposedAgendaItems")
+  minutesVerifications  MinutesVerification[]
 
   @@index([entityId, role])
   @@index([userId])
@@ -492,11 +515,33 @@ model AgendaItem {
   unanimousAdditionConfirmed Boolean @default(false)
   createdAt         DateTime @default(now())
 
+  // Secretary's agenda-preparation queue: an item set directly by
+  // agenda:set (Chairman/Secretary/etc.) is CONFIRMED immediately; an item
+  // submitted via agenda:propose, or materialized from a MeetingRequest's
+  // initiator-submitted agenda, starts PROPOSED and waits for the
+  // Secretary/Chairman to confirm or reject it into the final agenda.
+  status                AgendaItemStatus @default(CONFIRMED)
+  proposedByCapacityId  String?
+  proposedByCapacity    Capacity?        @relation("ProposedAgendaItems", fields: [proposedByCapacityId], references: [id])
+  meetingRequestId      String?
+  meetingRequest        MeetingRequest?  @relation(fields: [meetingRequestId], references: [id])
+  rejectionReason       String?
+  reviewedByUserId      String?
+  reviewedAt            DateTime?
+
+  // Compliance-assistant review against applicable law (RegulatoryRule) and
+  // the entity's own governing documents (GoverningDocument) — see
+  // agenda/review.ts. Re-runnable on demand; the most recent run is cached
+  // here so the Secretary's review queue doesn't recompute on every list.
+  complianceFlags       Json?
+  complianceReviewedAt  DateTime?
+
   resolutions Resolution[]
   documents   Document[]
   foundingForBoard Board[]
 
   @@index([meetingId])
+  @@index([meetingId, status])
 }
 
 model MeetingAttendance {
@@ -565,10 +610,36 @@ model Minutes {
   secretarySignedByUserId String?
   submittedToFraAt   DateTime?
   submittedToGafiAt  DateTime?
+  circulatedAt       DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
+  verifications MinutesVerification[]
+
   @@index([entityId, createdAt])
+}
+
+// Member verification of a circulated minutes draft — the gate between
+// DRAFT/CIRCULATED and signature. One row per attendee capacity per minutes
+// revision; a fresh POST .../minutes regeneration (after CHANGES_REQUESTED)
+// clears prior rows, since they verified content that no longer exists.
+model MinutesVerification {
+  id          String            @id @default(cuid())
+  minutesId   String
+  minutes     Minutes           @relation(fields: [minutesId], references: [id])
+  capacityId  String
+  capacity    Capacity          @relation(fields: [capacityId], references: [id])
+  decision    VerificationDecision
+  comments    String?
+  createdAt   DateTime          @default(now())
+
+  @@unique([minutesId, capacityId])
+  @@index([minutesId])
+}
+
+enum VerificationDecision {
+  APPROVED
+  CHANGES_REQUESTED
 }
 
 model MeetingRequest {
@@ -583,7 +654,15 @@ model MeetingRequest {
   responseDeadline  DateTime
   chairmanRespondedAt DateTime?
   resultingMeetingId String?
+  // The initiator's own agenda, submitted alongside the request — e.g.
+  // "[{title, description}]". Lightweight JSON rather than real AgendaItem
+  // rows, since no Meeting exists yet to attach them to; markMeetingRequestCalled
+  // materializes each entry into a PROPOSED AgendaItem once a meetingId is
+  // assigned, so it lands in the Secretary's normal review queue.
+  proposedAgenda    Json?
   createdAt         DateTime              @default(now())
+
+  materializedAgendaItems AgendaItem[]
 
   @@index([entityId, status])
 }
@@ -700,6 +779,33 @@ model RegulatoryRuleOverride {
   createdAt  DateTime            @default(now())
 
   @@unique([entityId, ruleId])
+}
+
+// ---------- Governing documents (agenda compliance review) ----------
+
+// The entity's own constitutive/contractual documents — Articles of
+// Association, Bylaws, Shareholders' Agreements, and other agreements,
+// covenants, or warrants — stored as extracted plain text (not a
+// storageKey pointer like Document, since the review engine in
+// agenda/review.ts needs to actually read the content, and the real
+// object-storage integration Document.storageKey assumes isn't built).
+// Small governing documents are the same category of "text worth keeping
+// directly in Postgres" as Minutes.content already is.
+model GoverningDocument {
+  id               String                @id @default(cuid())
+  entityId         String
+  entity           Entity                @relation(fields: [entityId], references: [id])
+  type             GoverningDocumentType
+  title            String
+  content          String
+  // Default citation prefix for flags raised against this document, e.g.
+  // "AoA Art. 12" — appended with the matched excerpt at review time.
+  citation         String?
+  effectiveFrom    DateTime              @default(now())
+  uploadedByUserId String
+  createdAt        DateTime              @default(now())
+
+  @@index([entityId, type])
 }
 
 // ---------- Document Management (Epic 10) ----------

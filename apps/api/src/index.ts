@@ -16,6 +16,7 @@ import { registerMinutesRoutes } from "./minutes/routes.js";
 import { registerComplianceRoutes } from "./compliance/routes.js";
 import { registerPublicRoutes } from "./public/routes.js";
 import { registerProfileRoutes } from "./profile/routes.js";
+import { registerGoverningDocumentRoutes } from "./governing-documents/routes.js";
 
 async function main() {
   const app = Fastify({
@@ -49,6 +50,7 @@ async function main() {
   await registerComplianceRoutes(app);
   await registerPublicRoutes(app);
   await registerProfileRoutes(app);
+  await registerGoverningDocumentRoutes(app);
 
   await app.listen({ port: env.PORT, host: "0.0.0.0" });
 }
