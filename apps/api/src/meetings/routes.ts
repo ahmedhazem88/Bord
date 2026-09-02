@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { withTenantContext } from "../db.js";
-import { requireCapability } from "../auth/rbac.js";
+import { requireCapability, requireEntityAccess } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
 
 /**
@@ -57,7 +57,7 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
     return reply.code(201).send(meeting);
   });
 
-  app.get("/entities/:entityId/meetings", { preHandler: app.authenticate }, async (request, reply) => {
+  app.get("/entities/:entityId/meetings", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const meetings = await withTenantContext(entityId, (tx) => tx.meeting.findMany({ where: { entityId }, orderBy: { scheduledAt: "desc" } }));
     return reply.send(meetings);
@@ -87,13 +87,17 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
     },
   );
 
-  app.get("/entities/:entityId/meetings/:meetingId/agenda-items", { preHandler: app.authenticate }, async (request, reply) => {
+  app.get("/entities/:entityId/meetings/:meetingId/agenda-items", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId, meetingId } = request.params as { entityId: string; meetingId: string };
     const items = await withTenantContext(entityId, (tx) => tx.agendaItem.findMany({ where: { meetingId }, orderBy: { order: "asc" } }));
     return reply.send(items);
   });
 
-  app.put("/entities/:entityId/meetings/:meetingId/attendance", { preHandler: app.authenticate }, async (request, reply) => {
+  // Closes the cross-tenant hole (any authenticated user marking attendance
+  // at an unrelated entity's meeting); it does not yet check that the caller
+  // is either the attendee themselves or the Secretary recording on their
+  // behalf — that finer-grained check is a follow-up, not covered here.
+  app.put("/entities/:entityId/meetings/:meetingId/attendance", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId, meetingId } = request.params as { entityId: string; meetingId: string };
     const body = rsvpSchema.parse(request.body);
 

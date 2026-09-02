@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { withTenantContext } from "../db.js";
-import { requireRole } from "../auth/rbac.js";
+import { requireEntityAccess, requireRole } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
 
 /**
@@ -43,7 +43,7 @@ export async function registerRemunerationRoutes(app: FastifyInstance): Promise<
     },
   );
 
-  app.get("/entities/:entityId/remuneration-policies", { preHandler: app.authenticate }, async (request, reply) => {
+  app.get("/entities/:entityId/remuneration-policies", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const policies = await withTenantContext(entityId, (tx) => tx.remunerationPolicy.findMany({ where: { entityId } }));
     return reply.send(policies);
@@ -102,7 +102,7 @@ export async function registerRemunerationRoutes(app: FastifyInstance): Promise<
     },
   );
 
-  app.get("/entities/:entityId/payouts", { preHandler: app.authenticate }, async (request, reply) => {
+  app.get("/entities/:entityId/payouts", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const payouts = await withTenantContext(entityId, (tx) =>
       tx.payout.findMany({ where: { remunerationRecord: { capacity: { entityId } } }, orderBy: { dueDate: "asc" } }),

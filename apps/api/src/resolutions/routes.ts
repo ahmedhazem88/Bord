@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { withTenantContext } from "../db.js";
-import { requireCapability, requireRole } from "../auth/rbac.js";
+import { requireCapability, requireEntityAccess, requireRole } from "../auth/rbac.js";
 import { createResolution, passResolution, ratifyResolution, rejectOrLapseResolution, type ResolutionEffectPayload } from "./engine.js";
 
 const createSchema = z.object({
@@ -78,7 +78,7 @@ export async function registerResolutionRoutes(app: FastifyInstance): Promise<vo
   );
 
   // "Pending changes" view — PRD 5.4: what's queued and its authorization deadline.
-  app.get("/entities/:entityId/resolutions/pending", { preHandler: app.authenticate }, async (request, reply) => {
+  app.get("/entities/:entityId/resolutions/pending", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const pending = await withTenantContext(entityId, (tx) =>
       tx.resolution.findMany({ where: { entityId, status: "PENDING_AUTHORIZATION" }, orderBy: { resolutionDate: "asc" } }),
@@ -87,7 +87,7 @@ export async function registerResolutionRoutes(app: FastifyInstance): Promise<vo
   });
 
   // Live/ratified resolution history — always reflects the current, binding state.
-  app.get("/entities/:entityId/resolutions", { preHandler: app.authenticate }, async (request, reply) => {
+  app.get("/entities/:entityId/resolutions", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const resolutions = await withTenantContext(entityId, (tx) =>
       tx.resolution.findMany({ where: { entityId }, orderBy: { createdAt: "desc" } }),

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { withTenantContext, withoutTenantContext } from "../db.js";
-import { requirePlatformAdmin, requireRole } from "../auth/rbac.js";
+import { requireEntityAccess, requirePlatformAdmin, requireRole } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
 
 /**
@@ -14,7 +14,7 @@ import { appendAuditLog } from "../audit/auditLog.js";
  */
 
 export async function registerRegulatoryRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/entities/:entityId/regulatory-obligations", { preHandler: app.authenticate }, async (request, reply) => {
+  app.get("/entities/:entityId/regulatory-obligations", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const obligations = await withTenantContext(entityId, (tx) =>
       tx.regulatoryObligation.findMany({ where: { entityId }, orderBy: { nextDueAt: "asc" } }),

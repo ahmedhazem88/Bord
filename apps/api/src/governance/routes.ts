@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { withTenantContext } from "../db.js";
-import { requireRole, requirePlatformAdmin } from "../auth/rbac.js";
+import { requireEntityAccess, requireRole, requirePlatformAdmin } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
 import { createResolution, passResolution } from "../resolutions/engine.js";
 import { validateBoardComposition, type BoardMemberSnapshot } from "./composition.js";
@@ -18,7 +18,7 @@ async function currentBoardMembers(tx: Prisma.TransactionClient, entityId: strin
 
 export async function registerGovernanceRoutes(app: FastifyInstance): Promise<void> {
   // Read-only check — lets the UI show violations live as the structure is built, before finalizing.
-  app.get("/entities/:entityId/governance/board/validate", { preHandler: app.authenticate }, async (request, reply) => {
+  app.get("/entities/:entityId/governance/board/validate", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const result = await withTenantContext(entityId, async (tx) => {
       const board = await tx.board.findUniqueOrThrow({ where: { entityId } });
@@ -137,7 +137,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance): Promise<vo
     },
   );
 
-  app.get("/entities/:entityId/governance/committees", { preHandler: app.authenticate }, async (request, reply) => {
+  app.get("/entities/:entityId/governance/committees", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const committees = await withTenantContext(entityId, (tx) =>
       tx.committee.findMany({ where: { entityId, dissolvedAt: null }, include: { memberships: { where: { endDate: null } } } }),

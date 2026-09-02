@@ -45,6 +45,42 @@ export function requireCapability(action: Action) {
 }
 
 /**
+ * Baseline gate for every entity-scoped read (or write that isn't already
+ * covered by requireCapability/requireRole): app.authenticate alone only
+ * proves *a* valid session exists, not that this entity's data is any of
+ * the caller's business — without this, any authenticated platform user
+ * could list an unrelated entity's board roster, resolutions, or payouts
+ * just by knowing its id. Passes for Platform Admin (onboarding/bootstrap
+ * visibility, per spec section 2) or anyone holding an active, verified
+ * capacity at the entity, of any role — read access to the roster/board
+ * status itself isn't role-differentiated the way specific actions are.
+ */
+export function requireEntityAccess() {
+  return async function entityAccessGuard(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    if (request.user.isPlatformAdmin) return;
+
+    const entityId = (request.params as Record<string, string | undefined>).entityId;
+    if (!entityId) {
+      await reply.code(400).send({ error: "entityId route parameter is required for this action" });
+      return;
+    }
+
+    const userId = request.user.sub;
+    const capacity = await withTenantContext(entityId, (tx) =>
+      tx.capacity.findFirst({
+        where: { userId, entityId, active: true, verificationStatus: "APPROVED" },
+        select: { id: true },
+      }),
+    );
+
+    if (!capacity) {
+      await reply.code(403).send({ error: "you do not hold an active capacity at this entity" });
+      return;
+    }
+  };
+}
+
+/**
  * Guard for administrative actions (verification review, GAFI/FRA submission
  * tracking) that sit outside the governance privileges matrix entirely —
  * spec section 12 only tables board/GA governance actions; Compliance

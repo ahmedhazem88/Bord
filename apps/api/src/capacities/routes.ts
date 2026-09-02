@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { withTenantContext, withUserContext } from "../db.js";
-import { requireCapability, requireRole } from "../auth/rbac.js";
+import { requireCapability, requireEntityAccess, requireRole } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
 import { evaluateDisqualification } from "./disqualification.js";
 
@@ -40,7 +40,7 @@ export async function registerCapacityRoutes(app: FastifyInstance): Promise<void
   });
 
   // "Who was chairman on date X" — spec section 5.3, queryable as-of any date.
-  app.get("/entities/:entityId/capacities", { preHandler: app.authenticate }, async (request, reply) => {
+  app.get("/entities/:entityId/capacities", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const query = request.query as Record<string, string>;
     const asOf = query.asOf ? new Date(query.asOf) : new Date();
