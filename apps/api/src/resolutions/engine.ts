@@ -37,7 +37,7 @@ export type ResolutionEffectPayload =
       // linked resolution"). Omit for a resolution with no structural effect.
       committee?: { name: string; committeeType: CommitteeType; charterMandate: string; quorumRule: string; minIndependentCount: number };
     }
-  | { type: "AOA_AMENDMENT" | "CAPITAL_CHANGE"; description: string }
+  | { type: "AOA_AMENDMENT" | "CAPITAL_CHANGE" | "DISSOLUTION" | "MERGER" | "MERGER_INCREASING_LIABILITY" | "PURPOSE_CHANGE"; description: string }
   | {
       // Onboarding bootstrap only — establishes a company's current
       // governance structure (from their actual legal documents) as the
@@ -176,9 +176,13 @@ async function applyEffect(
     }
     case "AOA_AMENDMENT":
     case "CAPITAL_CHANGE":
-      // No dedicated structural table yet for AoA text / capital ledger —
-      // recorded on the resolution itself; entity-record mutation is a
-      // follow-up once the AoA/capital data model is built.
+    case "DISSOLUTION":
+    case "MERGER":
+    case "MERGER_INCREASING_LIABILITY":
+    case "PURPOSE_CHANGE":
+      // No dedicated structural table yet for AoA text / capital ledger /
+      // entity lifecycle state — recorded on the resolution itself; entity-
+      // record mutation is a follow-up once that data model is built.
       return { kind: "NOT_YET_STRUCTURAL", note: payload.description };
     case "BUDGET_APPROVAL":
     case "FINANCIAL_STATEMENTS_APPROVAL":

@@ -85,6 +85,7 @@ export async function registerGovernanceRoutes(app: FastifyInstance): Promise<vo
     "NON_EXECUTIVE_BOARD_MEMBER",
     "INDEPENDENT_BOARD_MEMBER",
     "COMPLIANCE_OFFICER",
+    "AUDITOR",
   ]);
 
   const initialStructureSchema = z.object({

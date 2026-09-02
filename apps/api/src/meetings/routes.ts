@@ -9,6 +9,7 @@ import { computeQuorum, getMeetingRoster, resolveQuorumRules } from "./quorum.js
 import { createMeetingRequest, escalateMeetingRequest, markMeetingRequestCalled, MeetingRequestError } from "./requests.js";
 import { reviewAgendaItem } from "../agenda/review.js";
 import { createResolution, type ResolutionEffectPayload } from "../resolutions/engine.js";
+import { requiredMajorityForType } from "../resolutions/majority.js";
 
 /**
  * Epic 5 (Meeting & Conferencing).
@@ -26,15 +27,17 @@ import { createResolution, type ResolutionEffectPayload } from "../resolutions/e
  * Chairman confirms or rejects into the final CONFIRMED agenda — plus the
  * meeting "pack" bundling that confirmed agenda, its supporting documents,
  * quorum, and roster (the pull-based equivalent of "sent with the
- * invitations": this build has no push/email infrastructure). Voting itself
- * lives in resolutions/voting.ts, since a vote is cast against a
- * Resolution, not a Meeting.
- * NOT built yet: off-agenda-item blocking + 100%-unanimous-addition
- * override (adding an item live, mid-meeting — distinct from the
- * pre-meeting proposal workflow above), virtual-attendance
- * recording-retention enforcement, and actually notifying GAFI/the
- * regulator on escalation (out-of-platform act — this records that the
- * window lapsed, nothing more).
+ * invitations": this build has no push/email infrastructure). Also
+ * off-agenda-item blocking: once the Secretary/Chairman locks the agenda,
+ * the ordinary set/propose endpoints refuse new items, and only the
+ * Chairman's mid-meeting flag or a confirmed 100%-unanimous addition
+ * (every currently-attending capacity affirmatively confirming) can add one
+ * — see the /agenda/lock and /agenda-items/unanimous-addition* endpoints.
+ * Voting itself lives in resolutions/voting.ts, since a vote is cast
+ * against a Resolution, not a Meeting.
+ * NOT built yet: virtual-attendance recording-retention enforcement, and
+ * actually notifying GAFI/the regulator on escalation (out-of-platform act
+ * — this records that the window lapsed, nothing more).
  */
 
 const scheduleMeetingSchema = z.object({
@@ -53,9 +56,19 @@ const addAgendaItemSchema = z.object({
   order: z.number().int().nonnegative(),
   title: z.string().min(1),
   description: z.string().optional(),
+  // Spec section 5: once the agenda is locked, the Chairman alone may still
+  // add a serious issue arising mid-meeting — flagged and logged separately
+  // from the pre-set agenda. Only honored below if the caller actually
+  // holds the CHAIRMAN capacity; anyone else setting this is ignored.
+  chairmanOffAgendaFlag: z.boolean().default(false),
 });
 
 const proposeAgendaItemSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().optional(),
+});
+
+const unanimousAdditionSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
 });
@@ -159,11 +172,33 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
       const body = addAgendaItemSchema.parse(request.body);
 
       const item = await withTenantContext(entityId, async (tx) => {
+        const meeting = await tx.meeting.findUniqueOrThrow({ where: { id: meetingId } });
+
+        // Off-agenda blocking (spec section 5): once locked, nothing new
+        // lands on the agenda except the Chairman's own mid-meeting flag.
+        let isOffAgendaAddition = false;
+        if (meeting.agendaLockedAt) {
+          const callerCapacity = await tx.capacity.findFirst({
+            where: { userId: request.user.sub, entityId, active: true, verificationStatus: "APPROVED" },
+            select: { role: true },
+          });
+          if (!body.chairmanOffAgendaFlag || callerCapacity?.role !== "CHAIRMAN") {
+            throw Object.assign(
+              new Error("the agenda is locked — only the Chairman may add an item now (flagged separately), or use the unanimous-addition path"),
+              { statusCode: 409 },
+            );
+          }
+          isOffAgendaAddition = true;
+        }
+
         const complianceFlags = await reviewAgendaItem(tx, entityId, body.title, body.description);
         const created = await tx.agendaItem.create({
           data: {
             meetingId,
-            ...body,
+            order: body.order,
+            title: body.title,
+            description: body.description,
+            isOffAgendaAddition,
             status: "CONFIRMED",
             reviewedByUserId: request.user.sub,
             reviewedAt: new Date(),
@@ -174,7 +209,7 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
         await appendAuditLog(tx, {
           entityId,
           actorUserId: request.user.sub,
-          action: "AGENDA_ITEM_ADDED",
+          action: isOffAgendaAddition ? "AGENDA_ITEM_CHAIRMAN_FLAGGED_OFF_AGENDA" : "AGENDA_ITEM_ADDED",
           tableName: "AgendaItem",
           recordId: created.id,
           afterData: { ...body, flagCount: complianceFlags.length },
@@ -198,6 +233,13 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
       const body = proposeAgendaItemSchema.parse(request.body);
 
       const item = await withTenantContext(entityId, async (tx) => {
+        const meeting = await tx.meeting.findUniqueOrThrow({ where: { id: meetingId } });
+        if (meeting.agendaLockedAt) {
+          throw Object.assign(
+            new Error("the agenda is locked — pre-meeting proposals are closed; use the Chairman's off-agenda flag or the unanimous-addition path instead"),
+            { statusCode: 409 },
+          );
+        }
         const proposerCapacity = await tx.capacity.findFirst({
           where: { userId: request.user.sub, entityId, active: true, verificationStatus: "APPROVED" },
           select: { id: true },
@@ -273,13 +315,16 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
         // vote against.
         if (updated.suggestedResolutionEffect) {
           const effect = updated.suggestedResolutionEffect as unknown as ResolutionEffectPayload;
+          if (effect.type === "INITIAL_STRUCTURE") {
+            throw Object.assign(new Error("a hiring-sourced agenda item cannot carry an INITIAL_STRUCTURE effect"), { statusCode: 500 });
+          }
           await createResolution(tx, {
             entityId,
             agendaItemId: itemId,
             type: effect.type,
             title: updated.title,
             description: updated.description ?? updated.title,
-            requiredMajority: "BOARD_MAJORITY",
+            requiredMajority: requiredMajorityForType(effect.type),
             proposedEffect: effect,
             actorUserId: request.user.sub,
           });
@@ -316,6 +361,129 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
       });
 
       return reply.send(item);
+    },
+  );
+
+  // Publishes/finalizes the agenda ahead of the meeting — standing in for
+  // "sent out with the invitations." Once locked, no new item may be added
+  // except the Chairman's mid-meeting flag or a confirmed unanimous
+  // addition (spec section 5).
+  app.post(
+    "/entities/:entityId/meetings/:meetingId/agenda/lock",
+    { preHandler: [app.authenticate, requireCapability("agenda:set")] },
+    async (request, reply) => {
+      const { entityId, meetingId } = request.params as { entityId: string; meetingId: string };
+      const meeting = await withTenantContext(entityId, async (tx) => {
+        const current = await tx.meeting.findUniqueOrThrow({ where: { id: meetingId } });
+        if (current.agendaLockedAt) {
+          throw Object.assign(new Error("agenda is already locked"), { statusCode: 409 });
+        }
+        const updated = await tx.meeting.update({ where: { id: meetingId }, data: { agendaLockedAt: new Date() } });
+        await appendAuditLog(tx, { entityId, actorUserId: request.user.sub, action: "AGENDA_LOCKED", tableName: "Meeting", recordId: meetingId });
+        return updated;
+      });
+      return reply.send(meeting);
+    },
+  );
+
+  // Live-meeting override, part 1: raises a matter for unanimous addition —
+  // it does NOT land on the operative agenda yet (status PROPOSED) until
+  // every currently-attending eligible capacity affirmatively confirms it
+  // below. Only usable once the agenda is locked — before that, the
+  // ordinary propose/set endpoints are the right path.
+  app.post(
+    "/entities/:entityId/meetings/:meetingId/agenda-items/unanimous-addition",
+    { preHandler: [app.authenticate, requireCapability("agenda:set")] },
+    async (request, reply) => {
+      const { entityId, meetingId } = request.params as { entityId: string; meetingId: string };
+      const body = unanimousAdditionSchema.parse(request.body);
+
+      const item = await withTenantContext(entityId, async (tx) => {
+        const meeting = await tx.meeting.findUniqueOrThrow({ where: { id: meetingId } });
+        if (!meeting.agendaLockedAt) {
+          throw Object.assign(new Error("agenda isn't locked yet — use the ordinary propose/set endpoints instead"), { statusCode: 409 });
+        }
+        const maxOrder = await tx.agendaItem.aggregate({ where: { meetingId }, _max: { order: true } });
+        const complianceFlags = await reviewAgendaItem(tx, entityId, body.title, body.description);
+        const created = await tx.agendaItem.create({
+          data: {
+            meetingId,
+            order: (maxOrder._max.order ?? -1) + 1,
+            title: body.title,
+            description: body.description,
+            status: "PROPOSED",
+            isOffAgendaAddition: true,
+            complianceFlags: complianceFlags as unknown as Prisma.InputJsonValue,
+            complianceReviewedAt: new Date(),
+          },
+        });
+        await appendAuditLog(tx, {
+          entityId,
+          actorUserId: request.user.sub,
+          action: "UNANIMOUS_ADDITION_PROPOSED",
+          tableName: "AgendaItem",
+          recordId: created.id,
+          afterData: { title: body.title },
+        });
+        return created;
+      });
+
+      return reply.code(201).send(item);
+    },
+  );
+
+  // Live-meeting override, part 2: one attending capacity's affirmative
+  // confirmation. The item becomes part of the real agenda (CONFIRMED) the
+  // instant every capacity currently marked present (any non-ABSENT mode)
+  // has confirmed — a genuine 100%-unanimous requirement, not a majority.
+  app.post(
+    "/entities/:entityId/meetings/:meetingId/agenda-items/:itemId/unanimous-addition/confirm",
+    { preHandler: [app.authenticate, requireEntityAccess()] },
+    async (request, reply) => {
+      const { entityId, meetingId, itemId } = request.params as { entityId: string; meetingId: string; itemId: string };
+
+      const result = await withTenantContext(entityId, async (tx) => {
+        const item = await tx.agendaItem.findUniqueOrThrow({ where: { id: itemId } });
+        if (item.meetingId !== meetingId) {
+          throw Object.assign(new Error("agenda item does not belong to this meeting"), { statusCode: 400 });
+        }
+        if (!item.isOffAgendaAddition || item.status !== "PROPOSED") {
+          throw Object.assign(new Error("this item isn't an open unanimous-addition proposal"), { statusCode: 409 });
+        }
+
+        const callerCapacity = await tx.capacity.findFirst({
+          where: { userId: request.user.sub, entityId, active: true, verificationStatus: "APPROVED" },
+          select: { id: true },
+        });
+        const attendance = await tx.meetingAttendance.findMany({ where: { meetingId }, select: { capacityId: true, mode: true } });
+        const attendingCapacityIds = new Set(attendance.filter((a) => a.mode !== "ABSENT").map((a) => a.capacityId));
+        if (!callerCapacity || !attendingCapacityIds.has(callerCapacity.id)) {
+          throw Object.assign(new Error("only a capacity currently marked as attending this meeting can confirm"), { statusCode: 403 });
+        }
+
+        const confirmedIds = new Set(item.unanimousConfirmedByCapacityIds);
+        confirmedIds.add(callerCapacity.id);
+        const isUnanimous = [...attendingCapacityIds].every((id) => confirmedIds.has(id));
+
+        const updated = await tx.agendaItem.update({
+          where: { id: itemId },
+          data: {
+            unanimousConfirmedByCapacityIds: [...confirmedIds],
+            ...(isUnanimous ? { status: "CONFIRMED", unanimousAdditionConfirmed: true, reviewedByUserId: request.user.sub, reviewedAt: new Date() } : {}),
+          },
+        });
+        await appendAuditLog(tx, {
+          entityId,
+          actorUserId: request.user.sub,
+          action: isUnanimous ? "UNANIMOUS_ADDITION_CONFIRMED" : "UNANIMOUS_ADDITION_PARTIALLY_CONFIRMED",
+          tableName: "AgendaItem",
+          recordId: itemId,
+          afterData: { confirmedCount: confirmedIds.size, attendingCount: attendingCapacityIds.size, isUnanimous },
+        });
+        return updated;
+      });
+
+      return reply.send(result);
     },
   );
 
@@ -453,7 +621,11 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
           where: { userId: request.user.sub, entityId, active: true, verificationStatus: "APPROVED" },
           select: { role: true },
         });
-        if (!callerCapacity || !can(callerCapacity.role as GovernanceRole, requiredAction)) {
+        // The auditor's convocation right is OGM-only (Companies Law Art. 61
+        // para. 3) and isn't in the coarse privilege matrix for that reason —
+        // checked here directly instead of via `can()`.
+        const isAuditorOgmRequest = body.type === "OGM" && callerCapacity?.role === "AUDITOR";
+        if (!callerCapacity || (!can(callerCapacity.role as GovernanceRole, requiredAction) && !isAuditorOgmRequest)) {
           throw new MeetingRequestError(`role does not grant '${requiredAction}' at this entity`, 403);
         }
         return createMeetingRequest(tx, entityId, {

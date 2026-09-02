@@ -15,6 +15,7 @@ export const GOVERNANCE_ROLES = [
   "ADVISOR",
   "GA_MEMBER",
   "COMPLIANCE_OFFICER",
+  "AUDITOR",
 ] as const;
 export type GovernanceRole = (typeof GOVERNANCE_ROLES)[number];
 

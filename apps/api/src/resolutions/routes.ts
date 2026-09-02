@@ -4,29 +4,37 @@ import { withTenantContext } from "../db.js";
 import { requireCapability, requireEntityAccess, requireRole } from "../auth/rbac.js";
 import { createResolution, passResolution, ratifyResolution, rejectOrLapseResolution, type ResolutionEffectPayload } from "./engine.js";
 import { castVote, closeVotingAndTally, getResolutionTally, VotingError } from "./voting.js";
-import { MAJORITY_RULES } from "./majority.js";
+import { requiredMajorityForType } from "./majority.js";
+
+const CREATABLE_RESOLUTION_TYPES = [
+  "COMMITTEE_ASSIGNMENT",
+  "MD_REMUNERATION",
+  "EXECUTIVE_REMUNERATION",
+  "PROCEDURAL",
+  "BOARD_APPOINTMENT",
+  "BOARD_REMOVAL",
+  "GA_SET_BOARD_REMUNERATION",
+  "AOA_AMENDMENT",
+  "CAPITAL_CHANGE",
+  "BUDGET_APPROVAL",
+  "FINANCIAL_STATEMENTS_APPROVAL",
+  "DISSOLUTION",
+  "MERGER",
+  "MERGER_INCREASING_LIABILITY",
+  "PURPOSE_CHANGE",
+] as const;
 
 const createSchema = z.object({
   agendaItemId: z.string(),
   // INITIAL_STRUCTURE is deliberately excluded — that type is only ever
   // created through the onboarding bootstrap path in governance/routes.ts,
   // never through this general-purpose endpoint.
-  type: z.enum([
-    "COMMITTEE_ASSIGNMENT",
-    "MD_REMUNERATION",
-    "EXECUTIVE_REMUNERATION",
-    "PROCEDURAL",
-    "BOARD_APPOINTMENT",
-    "BOARD_REMOVAL",
-    "GA_SET_BOARD_REMUNERATION",
-    "AOA_AMENDMENT",
-    "CAPITAL_CHANGE",
-    "BUDGET_APPROVAL",
-    "FINANCIAL_STATEMENTS_APPROVAL",
-  ]),
+  type: z.enum(CREATABLE_RESOLUTION_TYPES),
   title: z.string().min(1),
   description: z.string().min(1),
-  requiredMajority: z.enum(MAJORITY_RULES as [string, ...string[]]),
+  // No requiredMajority field: the majority a resolution type requires is a
+  // legal fact (spec section 6), not a caller choice — derived from `type`
+  // via requiredMajorityForType below, not accepted from the request body.
   // What this resolution does if it passes — applied automatically when
   // voting closes and the majority is met (see close-voting below). Omit
   // for a resolution with no structural effect (e.g. a procedural note).
@@ -55,7 +63,7 @@ export async function registerResolutionRoutes(app: FastifyInstance): Promise<vo
       const { entityId } = request.params as { entityId: string };
       const body = createSchema.parse(request.body);
       const resolution = await withTenantContext(entityId, (tx) =>
-        createResolution(tx, { entityId, actorUserId: request.user.sub, ...body }),
+        createResolution(tx, { entityId, actorUserId: request.user.sub, ...body, requiredMajority: requiredMajorityForType(body.type) }),
       );
       return reply.code(201).send(resolution);
     },

@@ -16,7 +16,11 @@ export type ResolutionType =
   | "CAPITAL_CHANGE"
   | "INITIAL_STRUCTURE"
   | "BUDGET_APPROVAL"
-  | "FINANCIAL_STATEMENTS_APPROVAL";
+  | "FINANCIAL_STATEMENTS_APPROVAL"
+  | "DISSOLUTION"
+  | "MERGER"
+  | "MERGER_INCREASING_LIABILITY"
+  | "PURPOSE_CHANGE";
 
 /** Statutory default effect basis per resolution type — overridable per-entity via RegulatoryRule custom override (PRD 5.4, spec section 8). */
 export const DEFAULT_EFFECT_BASIS: Record<ResolutionType, EffectBasis> = {
@@ -37,6 +41,13 @@ export const DEFAULT_EFFECT_BASIS: Record<ResolutionType, EffectBasis> = {
   // RegulatoryObligation, not gated through GAFI authorization here.
   BUDGET_APPROVAL: "RESOLUTION_EFFECTIVE",
   FINANCIAL_STATEMENTS_APPROVAL: "RESOLUTION_EFFECTIVE",
+  // EGM extraordinary matters — same GAFI-ratification-gated basis as AoA
+  // amendment/capital change: internal record from the resolution date,
+  // binding on third parties only from ratification.
+  DISSOLUTION: "AUTHORIZATION_EFFECTIVE",
+  MERGER: "AUTHORIZATION_EFFECTIVE",
+  MERGER_INCREASING_LIABILITY: "AUTHORIZATION_EFFECTIVE",
+  PURPOSE_CHANGE: "AUTHORIZATION_EFFECTIVE",
 };
 
 export type VoteValue = "FOR" | "AGAINST" | "ABSTAIN" | "RECUSED";

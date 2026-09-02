@@ -98,6 +98,7 @@ export const PRIVILEGE_MATRIX: PrivilegeGrant[] = [
   { action: "verification:upload_own", role: "COMMITTEE_MEMBER", scope: "own" },
   { action: "verification:upload_own", role: "GA_MEMBER", scope: "own" },
   { action: "verification:upload_own", role: "ADVISOR", scope: "own" },
+  { action: "verification:upload_own", role: "AUDITOR", scope: "own" },
   { action: "verification:upload_entity_level", role: "CORPORATE_SECRETARY", scope: "entity" },
 
   { action: "meeting:request_board", role: "CHAIRMAN", scope: "full" },
@@ -107,6 +108,10 @@ export const PRIVILEGE_MATRIX: PrivilegeGrant[] = [
   { action: "meeting:request_board", role: "EXECUTIVE_BOARD_MEMBER", scope: "full" },
   { action: "meeting:request_board", role: "INDEPENDENT_BOARD_MEMBER", scope: "full" },
   { action: "meeting:request_ga", role: "GA_MEMBER", scope: "full" },
+  // Deliberately NOT a matrix row for AUDITOR: the auditor's right is
+  // OGM-only (Companies Law Art. 61 para. 3), not EGM, so it can't be
+  // expressed as a blanket action grant here — see the OGM-specific check
+  // in meetings/routes.ts and requests.ts instead.
 
   { action: "interest:declare_update", role: "CHAIRMAN", scope: "full" },
   { action: "interest:declare_update", role: "VICE_CHAIRMAN", scope: "full" },

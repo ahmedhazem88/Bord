@@ -100,6 +100,40 @@ export async function createMeetingRequest(tx: Prisma.TransactionClient, entityI
     return request;
   }
 
+  // OGM only: the auditor's request alone obliges the board to convene,
+  // regardless of capital held (Companies Law Art. 61 para. 3) — checked
+  // before the GA-member capital-percentage path below, since an auditor
+  // capacity won't appear in the GA_MEMBER roster at all.
+  if (input.type === "OGM") {
+    const auditorCapacities = await tx.capacity.findMany({
+      where: { id: { in: input.requestorCapacityIds }, entityId, role: "AUDITOR", active: true, verificationStatus: "APPROVED" },
+      select: { id: true },
+    });
+    if (auditorCapacities.length > 0) {
+      const responseDeadline = new Date(now.getTime() + thresholds.gaResponseDays * 24 * 60 * 60 * 1000);
+      const request = await tx.meetingRequest.create({
+        data: {
+          entityId,
+          type: "OGM",
+          requestorCapacityIds: auditorCapacities.map((c) => c.id),
+          capitalOrMemberPct: null,
+          thresholdMet: true,
+          responseDeadline,
+          proposedAgenda: (input.proposedAgenda as unknown as Prisma.InputJsonValue) ?? undefined,
+        },
+      });
+      await appendAuditLog(tx, {
+        entityId,
+        actorUserId: input.actorUserId,
+        action: "MEETING_REQUEST_SUBMITTED",
+        tableName: "MeetingRequest",
+        recordId: request.id,
+        afterData: { type: "OGM", requestedBy: "AUDITOR", thresholdMet: true, responseDeadline },
+      });
+      return request;
+    }
+  }
+
   // OGM / EGM — capital-percentage threshold.
   const roster = await getMeetingRoster(tx, entityId, input.type, null);
   const matching = roster.filter((r) => input.requestorCapacityIds.includes(r.capacityId));
