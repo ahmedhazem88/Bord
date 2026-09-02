@@ -5,7 +5,7 @@ import { withTenantContext } from "../db.js";
 import { requireEntityAccess, requireRole, requirePlatformAdmin } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
 import { createResolution, passResolution } from "../resolutions/engine.js";
-import { validateBoardComposition, type BoardMemberSnapshot } from "./composition.js";
+import { validateBoardComposition, validateCommitteeComposition, type BoardMemberSnapshot, type CommitteeSnapshot } from "./composition.js";
 
 async function currentBoardMembers(tx: Prisma.TransactionClient, entityId: string): Promise<BoardMemberSnapshot[]> {
   const now = new Date();
@@ -16,14 +16,30 @@ async function currentBoardMembers(tx: Prisma.TransactionClient, entityId: strin
   return capacities.map((c) => ({ capacityId: c.id, userId: c.userId, role: c.role, gender: c.user.gender }));
 }
 
+async function currentCommittees(tx: Prisma.TransactionClient, entityId: string): Promise<CommitteeSnapshot[]> {
+  const committees = await tx.committee.findMany({
+    where: { entityId, dissolvedAt: null },
+    include: { memberships: { where: { endDate: null }, include: { capacity: { select: { role: true } } } } },
+  });
+  return committees.map((c) => ({
+    id: c.id,
+    name: c.name,
+    type: c.type,
+    minIndependentCount: c.minIndependentCount,
+    members: c.memberships.map((m) => ({ role: m.capacity.role, isChair: m.isChair })),
+  }));
+}
+
 export async function registerGovernanceRoutes(app: FastifyInstance): Promise<void> {
   // Read-only check — lets the UI show violations live as the structure is built, before finalizing.
   app.get("/entities/:entityId/governance/board/validate", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const result = await withTenantContext(entityId, async (tx) => {
       const board = await tx.board.findUniqueOrThrow({ where: { entityId } });
-      const members = await currentBoardMembers(tx, entityId);
-      return validateBoardComposition(members, { chairMdSeparationExceptionApproved: board.chairMdSeparationExceptionApproved });
+      const [members, committees] = await Promise.all([currentBoardMembers(tx, entityId), currentCommittees(tx, entityId)]);
+      const boardCheck = validateBoardComposition(members, { chairMdSeparationExceptionApproved: board.chairMdSeparationExceptionApproved });
+      const committeeCheck = validateCommitteeComposition(committees);
+      return { valid: boardCheck.valid && committeeCheck.valid, violations: [...boardCheck.violations, ...committeeCheck.violations] };
     });
     return reply.send(result);
   });
@@ -36,8 +52,10 @@ export async function registerGovernanceRoutes(app: FastifyInstance): Promise<vo
       const { entityId } = request.params as { entityId: string };
       const result = await withTenantContext(entityId, async (tx) => {
         const board = await tx.board.findUniqueOrThrow({ where: { entityId } });
-        const members = await currentBoardMembers(tx, entityId);
-        const check = validateBoardComposition(members, { chairMdSeparationExceptionApproved: board.chairMdSeparationExceptionApproved });
+        const [members, committees] = await Promise.all([currentBoardMembers(tx, entityId), currentCommittees(tx, entityId)]);
+        const boardCheck = validateBoardComposition(members, { chairMdSeparationExceptionApproved: board.chairMdSeparationExceptionApproved });
+        const committeeCheck = validateCommitteeComposition(committees);
+        const check = { valid: boardCheck.valid && committeeCheck.valid, violations: [...boardCheck.violations, ...committeeCheck.violations] };
 
         await tx.board.update({ where: { entityId }, data: { lastValidatedAt: new Date(), lastValidationPassed: check.valid } });
         await appendAuditLog(tx, {

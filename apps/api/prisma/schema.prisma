@@ -197,6 +197,31 @@ enum DocumentOwnerType {
   ENTITY
 }
 
+// Spec section 4's document checklist. AoA/Bylaws/Shareholders' Agreement/
+// Warrant/Covenant/other-agreement are deliberately NOT here — those live on
+// GoverningDocument instead, since their text is parsed for agenda
+// compliance-review term matching, not just stored as a KYC artifact.
+enum DocumentType {
+  // Individual verification checklist
+  NATIONAL_ID_OR_PASSPORT
+  CRIMINAL_RECORD_CERTIFICATE
+  EXPERIENCE_CERTIFICATE
+  PROFESSIONAL_LICENSE
+  MINISTERIAL_APPROVAL_LETTER
+  PRIOR_BOARD_APPROVAL_RECORD
+
+  // Corporate checklist items not covered by GoverningDocumentType
+  COMMERCIAL_REGISTRATION
+  TAX_REGISTRATION_CERTIFICATE
+  SIGNATORY_APPOINTING_RESOLUTION
+
+  // Operational documents (Epic 10)
+  MINUTES
+  RESOLUTION_RECORD
+  MEETING_RECORDING
+  OTHER
+}
+
 enum RegulatoryObligationType {
   BOARD_MEETING_CADENCE
   OGM_ANNUAL
@@ -851,7 +876,7 @@ model Document {
   capacity           Capacity?           @relation("CapacityDocuments", fields: [capacityId], references: [id])
   agendaItemId       String?
   agendaItem         AgendaItem?         @relation(fields: [agendaItemId], references: [id])
-  type               String // national_id | criminal_record | experience_certificate | commercial_registration | minutes | resolution | recording | ...
+  type               DocumentType
   storageKey         String // pointer into encrypted object storage, per-entity isolated prefix
   verificationStatus VerificationStatus  @default(PENDING)
   verificationReason String?

@@ -5,10 +5,29 @@ import { requireCapability, requireEntityAccess, requireRole } from "../auth/rba
 import { appendAuditLog } from "../audit/auditLog.js";
 import { evaluateDisqualification } from "./disqualification.js";
 
+const INDIVIDUAL_DOCUMENT_TYPES = [
+  "NATIONAL_ID_OR_PASSPORT",
+  "CRIMINAL_RECORD_CERTIFICATE",
+  "EXPERIENCE_CERTIFICATE",
+  "PROFESSIONAL_LICENSE",
+  "MINISTERIAL_APPROVAL_LETTER",
+  "PRIOR_BOARD_APPROVAL_RECORD",
+] as const;
+
 const uploadDocSchema = z.object({
-  documentType: z.string().min(1),
+  documentType: z.enum(INDIVIDUAL_DOCUMENT_TYPES),
   storageKey: z.string().min(1),
 });
+
+// Spec section 4: every capacity holder needs ID, a clear criminal-record
+// certificate, and experience evidence on file before approval; a
+// Compliance Officer capacity additionally needs its professional license.
+// Ministerial-approval-letter and prior-board-approval-record are gated
+// separately by DisqualificationCheck's own status fields, not required here.
+function requiredIndividualDocumentTypes(role: string): (typeof INDIVIDUAL_DOCUMENT_TYPES)[number][] {
+  const baseline: (typeof INDIVIDUAL_DOCUMENT_TYPES)[number][] = ["NATIONAL_ID_OR_PASSPORT", "CRIMINAL_RECORD_CERTIFICATE", "EXPERIENCE_CERTIFICATE"];
+  return role === "COMPLIANCE_OFFICER" ? [...baseline, "PROFESSIONAL_LICENSE"] : baseline;
+}
 
 const reviewSchema = z.object({
   decision: z.enum(["APPROVED", "REJECTED"]),
@@ -119,6 +138,16 @@ export async function registerCapacityRoutes(app: FastifyInstance): Promise<void
             new Error("cannot approve: disqualification check blocks activation (escalation required, no self-override)"),
             { statusCode: 409 },
           );
+        }
+
+        if (body.decision === "APPROVED") {
+          const required = requiredIndividualDocumentTypes(capacity.role);
+          const uploaded = await tx.document.findMany({ where: { capacityId, type: { in: required } }, select: { type: true } });
+          const uploadedTypes = new Set(uploaded.map((d) => d.type));
+          const missing = required.filter((t) => !uploadedTypes.has(t));
+          if (missing.length > 0) {
+            throw Object.assign(new Error(`cannot approve: missing required verification documents: ${missing.join(", ")}`), { statusCode: 409 });
+          }
         }
 
         const updated = await tx.capacity.update({

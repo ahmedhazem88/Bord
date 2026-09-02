@@ -18,7 +18,7 @@ import { appendAuditLog } from "../audit/auditLog.js";
  */
 
 const createDocumentSchema = z.object({
-  type: z.string().min(1),
+  type: z.enum(["COMMERCIAL_REGISTRATION", "TAX_REGISTRATION_CERTIFICATE", "SIGNATORY_APPOINTING_RESOLUTION", "MINUTES", "RESOLUTION_RECORD", "MEETING_RECORDING", "OTHER"]),
   storageKey: z.string().min(1),
   agendaItemId: z.string().optional(),
 });

@@ -1,6 +1,13 @@
 import type { Prisma, ResolutionType, GovernanceRole as PrismaGovernanceRole, RemunerationComponent, CommitteeType } from "@prisma/client";
-import { DEFAULT_EFFECT_BASIS, type EffectBasis } from "@bord/shared";
+import { DEFAULT_EFFECT_BASIS, EXECUTIVE_ROLES, type EffectBasis } from "@bord/shared";
 import { appendAuditLog } from "../audit/auditLog.js";
+
+/** Spec section 3: a committee chair must be non-executive. */
+function assertChairEligible(role: PrismaGovernanceRole): void {
+  if (EXECUTIVE_ROLES.includes(role)) {
+    throw new Error(`cannot make this appointment committee chair — role ${role} is executive, and a committee chair must be non-executive`);
+  }
+}
 
 /**
  * Resolution Engine — PRD section 5.4 / spec section 4.
@@ -137,6 +144,10 @@ async function applyEffect(
       return { kind: "BOARD_REMOVAL", capacityId: payload.capacityId, priorEndDate: capacity.endDate, priorActive: capacity.active };
     }
     case "COMMITTEE_ASSIGNMENT": {
+      if (payload.isChair) {
+        const capacity = await tx.capacity.findUniqueOrThrow({ where: { id: payload.capacityId }, select: { role: true } });
+        assertChairEligible(capacity.role);
+      }
       const membership = await tx.committeeMembership.create({
         data: {
           committeeId: payload.committeeId,
@@ -177,6 +188,7 @@ async function applyEffect(
       return { kind: "NONE" };
     case "INITIAL_STRUCTURE": {
       const capacityIdByUserId = new Map<string, string>();
+      const roleByUserId = new Map<string, PrismaGovernanceRole>();
       const capacityIds: string[] = [];
 
       for (const appt of payload.boardAppointments) {
@@ -195,6 +207,7 @@ async function applyEffect(
           },
         });
         capacityIdByUserId.set(appt.userId, capacity.id);
+        roleByUserId.set(appt.userId, appt.role);
         capacityIds.push(capacity.id);
       }
 
@@ -217,6 +230,10 @@ async function applyEffect(
       const committeeIds: string[] = [];
       const membershipIds: string[] = [];
       for (const c of payload.committees) {
+        if (c.chairUserId) {
+          const chairRole = roleByUserId.get(c.chairUserId);
+          if (chairRole) assertChairEligible(chairRole);
+        }
         const committee = await tx.committee.create({
           data: {
             entityId,

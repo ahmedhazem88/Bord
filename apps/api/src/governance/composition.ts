@@ -1,5 +1,52 @@
 import { BOARD_ROLES, EXECUTIVE_ROLES, INDEPENDENT_ROLES, NON_EXECUTIVE_ROLES, type GovernanceRole } from "@bord/shared";
 
+const MANDATORY_COMMITTEE_TYPES = ["AUDIT", "RISK", "REMUNERATION_AND_NOMINATION", "GOVERNANCE"] as const;
+
+export interface CommitteeMemberSnapshot {
+  role: GovernanceRole;
+  isChair: boolean;
+}
+
+export interface CommitteeSnapshot {
+  id: string;
+  name: string;
+  type: (typeof MANDATORY_COMMITTEE_TYPES)[number] | "CUSTOM";
+  minIndependentCount: number;
+  members: CommitteeMemberSnapshot[];
+}
+
+/**
+ * Epic 3 spec section 3: Audit/Risk/Remuneration & Nomination/Governance
+ * committees are mandatory (custom committees may exist alongside them);
+ * every committee needs a non-executive chair and its declared minimum of
+ * independent members actually seated.
+ */
+export function validateCommitteeComposition(committees: CommitteeSnapshot[]): { valid: boolean; violations: string[] } {
+  const violations: string[] = [];
+
+  for (const type of MANDATORY_COMMITTEE_TYPES) {
+    if (!committees.some((c) => c.type === type)) {
+      violations.push(`Entity has no ${type.replace(/_/g, " ")} committee — Audit, Risk, Remuneration & Nomination, and Governance committees are mandatory.`);
+    }
+  }
+
+  for (const c of committees) {
+    const chairs = c.members.filter((m) => m.isChair);
+    if (chairs.length === 0) {
+      violations.push(`Committee "${c.name}" has no chair.`);
+    } else if (chairs.some((m) => EXECUTIVE_ROLES.includes(m.role))) {
+      violations.push(`Committee "${c.name}"'s chair must be non-executive.`);
+    }
+
+    const independentCount = c.members.filter((m) => INDEPENDENT_ROLES.includes(m.role)).length;
+    if (independentCount < c.minIndependentCount) {
+      violations.push(`Committee "${c.name}" requires at least ${c.minIndependentCount} independent member(s); currently has ${independentCount}.`);
+    }
+  }
+
+  return { valid: violations.length === 0, violations };
+}
+
 export interface BoardMemberSnapshot {
   capacityId: string;
   userId: string;
