@@ -4,6 +4,7 @@ import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { Callout, StatusLabel } from "../components/StatusLabel";
 import { useDocumentHead } from "../hooks/useDocumentHead";
+import { EntityPublicProfileCard } from "../components/EntityPublicProfileCard";
 
 interface Capacity {
   id: string;
@@ -175,6 +176,13 @@ export function EntityGovernancePage() {
       </table>
       {pending?.length === 0 && <p className="subtle">Nothing pending authorization.</p>}
 
+      {capacities?.some((c) => c.user.id === decoded?.sub && c.role === "COMPLIANCE_OFFICER" && c.active) && (
+        <>
+          <hr className="hairline-divider" />
+          <EntityPublicProfileCard entityId={entityId} />
+        </>
+      )}
+
       {decoded?.isPlatformAdmin && (
         <>
           <hr className="hairline-divider" />
@@ -185,18 +193,22 @@ export function EntityGovernancePage() {
           </p>
           <form onSubmit={seedCapacity}>
             <div className="field">
-              <label>User ID</label>
-              <input value={seedUserId} onChange={(e) => setSeedUserId(e.target.value)} required />
+              <label>
+                User ID
+                <input value={seedUserId} onChange={(e) => setSeedUserId(e.target.value)} required />
+              </label>
             </div>
             <div className="field">
-              <label>Role</label>
-              <select value={seedRole} onChange={(e) => setSeedRole(e.target.value)}>
-                {BOARD_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
+              <label>
+                Role
+                <select value={seedRole} onChange={(e) => setSeedRole(e.target.value)}>
+                  {BOARD_ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             {seedError && <p className="error-text">{seedError}</p>}
             <button className="btn btn-secondary" type="submit">

@@ -125,13 +125,17 @@ table.flat-table th {
 }
 
 .field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   margin-bottom: var(--space-2);
 }
 
 .field label {
+  /* Input nests inside its own <label> (implicit label association, no id
+     wiring needed) rather than sitting beside it as an unrelated sibling —
+     every field here is now reachable by its visible label, for assistive
+     tech and for anyone tabbing/clicking straight to the text. */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   font-size: 13px;
   color: var(--color-subtle);
 }
@@ -166,6 +170,48 @@ table.flat-table th {
 
 .auth-card {
   width: 360px;
+}
+
+.success-state {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-1) 0;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: var(--space-2);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.toggle-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-accent);
+  /* Fitts's Law: a larger, easier-to-hit control than the browser default checkbox. */
+}
+
+.field textarea {
+  font-family: inherit;
+  font-size: 15px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-hairline);
+  background: var(--color-background);
+  color: var(--color-ink);
+  resize: vertical;
+}
+
+.profile-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* Minimize target distance: Save sits directly beside its own feedback
+     and the resulting link, instead of scattered across the card. */
 }
 
 .top-nav-logo {

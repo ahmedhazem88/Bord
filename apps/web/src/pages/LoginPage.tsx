@@ -110,12 +110,16 @@ export function LoginPage() {
         {step === "credentials" && (
           <form onSubmit={submitCredentials}>
             <div className="field">
-              <label>Email</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+              <label>
+                Email
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+              </label>
             </div>
             <div className="field">
-              <label>Password</label>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <label>
+                Password
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              </label>
             </div>
             {error && <p className="error-text">{error}</p>}
             <button className="btn" type="submit" disabled={busy}>
@@ -131,8 +135,10 @@ export function LoginPage() {
           <form onSubmit={submitMfaToken}>
             <p className="subtle">Enter your 6-digit authenticator code.</p>
             <div className="field">
-              <label>Authentication code</label>
-              <input value={mfaToken} onChange={(e) => setMfaToken(e.target.value)} maxLength={6} required />
+              <label>
+                Authentication code
+                <input value={mfaToken} onChange={(e) => setMfaToken(e.target.value)} maxLength={6} required />
+              </label>
             </div>
             {error && <p className="error-text">{error}</p>}
             <button className="btn" type="submit" disabled={busy}>
@@ -161,8 +167,10 @@ export function LoginPage() {
               {otpAuthUrl}
             </p>
             <div className="field">
-              <label>Confirm 6-digit code</label>
-              <input value={confirmCode} onChange={(e) => setConfirmCode(e.target.value)} maxLength={6} required />
+              <label>
+                Confirm 6-digit code
+                <input value={confirmCode} onChange={(e) => setConfirmCode(e.target.value)} maxLength={6} required />
+              </label>
             </div>
             {error && <p className="error-text">{error}</p>}
             <button className="btn" type="submit" disabled={busy}>

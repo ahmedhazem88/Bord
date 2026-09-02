@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useDocumentHead } from "../hooks/useDocumentHead";
+import { PublicProfileCard } from "../components/PublicProfileCard";
 
 interface Entity {
   id: string;
@@ -72,22 +73,28 @@ export function DashboardPage() {
           <h3>Onboard a new entity</h3>
           <form onSubmit={createEntity}>
             <div className="field">
-              <label>Legal name</label>
-              <input value={legalName} onChange={(e) => setLegalName(e.target.value)} required />
+              <label>
+                Legal name
+                <input value={legalName} onChange={(e) => setLegalName(e.target.value)} required />
+              </label>
             </div>
             <div className="field">
-              <label>Registration number</label>
-              <input value={registrationNumber} onChange={(e) => setRegistrationNumber(e.target.value)} required />
+              <label>
+                Registration number
+                <input value={registrationNumber} onChange={(e) => setRegistrationNumber(e.target.value)} required />
+              </label>
             </div>
             <div className="field">
-              <label>Entity type</label>
-              <select value={entityType} onChange={(e) => setEntityType(e.target.value)}>
-                {ENTITY_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              <label>
+                Entity type
+                <select value={entityType} onChange={(e) => setEntityType(e.target.value)}>
+                  {ENTITY_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             {error && <p className="error-text">{error}</p>}
             <button className="btn" type="submit">
@@ -148,6 +155,8 @@ export function DashboardPage() {
         </tbody>
       </table>
       {capacities?.length === 0 && <p className="subtle">No capacities yet.</p>}
+
+      <PublicProfileCard />
     </div>
   );
 }

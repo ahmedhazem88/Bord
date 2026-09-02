@@ -35,20 +35,35 @@ export function RegisterPage() {
       <div className="card auth-card">
         <h2>Create account</h2>
         {done ? (
-          <p className="subtle">Account created. Redirecting to sign in…</p>
+          // Peak-End Rule: the flow's final moment is what's remembered — a
+          // clear, affirmative state beats a barely-noticeable aside, even
+          // though it's on screen for little over a second either way.
+          <div className="success-state">
+            <span className="status-label">
+              <span className="status-dot" />
+              Account created
+            </span>
+            <p className="subtle">Taking you to sign in…</p>
+          </div>
         ) : (
           <form onSubmit={submit}>
             <div className="field">
-              <label>Full name</label>
-              <input value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+              <label>
+                Full name
+                <input value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+              </label>
             </div>
             <div className="field">
-              <label>Email</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+              <label>
+                Email
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+              </label>
             </div>
             <div className="field">
-              <label>Password (min 12 characters)</label>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={12} />
+              <label>
+                Password (min 12 characters)
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={12} />
+              </label>
             </div>
             {error && <p className="error-text">{error}</p>}
             <button className="btn" type="submit">
