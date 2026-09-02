@@ -83,20 +83,29 @@ This is the Phase 1 architectural foundation, built in build-sequence order (PRD
   voting mechanism from the FOR/AGAINST/ABSTAIN/RECUSED Resolution model). Also fixed a real bug
   found while testing this: `requireCapability` checked only one arbitrarily-chosen capacity when a
   person held more than one at the same entity, instead of checking the grant across all of them.
-- **Scaffolded, not complete**: Regulatory Calendar (Epic 6) and the Interest Registry half of
-  Compliance Guardrails (Epic 9) — the data model, escalation math, and statutory-vs-override
-  resolution machinery are real, but nothing seeds a `RegulatoryObligation` row for a live entity,
-  there's no job scheduler (alerts are pull/computed, not pushed — see `src/compliance/routes.ts`),
-  and `InterestDeclaration` has no creation/reconfirmation/agenda-matching wiring at all yet.
-  Regulatory Change Monitoring's scheduled scan (Epic 7), Remuneration & Payouts' cap
-  auto-calculation from financials (Epic 8), and Document Management's object storage (Epic 10) are
-  likewise unbuilt. No frontend screens yet for the Epic 5/6/7 endpoints (voting, minutes directory,
-  compliance search, elections) or for the agenda preparation tool, governing-documents library, and
-  minutes circulation/verification — all API-only so far, verified via live end-to-end smoke tests
-  rather than a UI. Virtual-attendance recording-retention enforcement, and the OGM/EGM invitation
-  mechanics (newspaper publication, registered mail, GAFI/FRA copies, the 21-day notice window) are
-  also not built — the latter needs a real decision on the entity's actual operational process, not
-  just code. Each module's source file says explicitly what's built vs. deferred.
+  Epic 6 (Regulatory Calendar) and the Interest Registry half of Epic 9 (Compliance Guardrails) are
+  now real, not just scaffolded: standing obligations (board-meeting cadence, annual OGM, FRA annual
+  disclosure) seed at onboarding; FRA minutes-submission and, for OGM/EGM, GAFI-ratification
+  obligations seed the moment minutes go FINAL; auditor-rotation, board term-limit, and
+  interest-declaration-reconfirmation obligations seed at the actual appointment event through the
+  Resolution Engine (`src/regulatory/obligations.ts`) — no job scheduler exists, so
+  `syncOverdueObligations` persists the OVERDUE transition and audit-logs it on read, called from
+  both the regulatory-obligations list and the compliance-alerts endpoint. `InterestDeclaration` now
+  has full self-service creation/withdrawal (`src/interests/routes.ts`), entity-wide visibility for
+  whoever sets the agenda, automatic agenda-item flagging against declared interests
+  (`src/agenda/review.ts`), and a default-to-Recused vote for a matching declared interest — a soft,
+  overridable default (`interestOverrideReason`) distinct from Art. 74's hard exclusion, logged as
+  its own audit action when overridden (`src/resolutions/voting.ts`).
+- **Scaffolded, not complete**: Regulatory Change Monitoring's scheduled scan (Epic 7), Remuneration
+  & Payouts' cap auto-calculation from financials (Epic 8), and Document Management's object storage
+  (Epic 10) are unbuilt. No frontend screens yet for the Epic 5/6/7 endpoints (voting, minutes
+  directory, compliance search, elections, interest declarations) or for the agenda preparation tool,
+  governing-documents library, and minutes circulation/verification — all API-only so far, verified
+  via live end-to-end smoke tests rather than a UI. Virtual-attendance recording-retention
+  enforcement, and the OGM/EGM invitation mechanics (newspaper publication, registered mail, GAFI/FRA
+  copies, the 21-day notice window) are also not built — the latter needs a real decision on the
+  entity's actual operational process, not just code. Each module's source file says explicitly what's
+  built vs. deferred.
 - **Not started**: e-signature CSP integration (minutes "signing" today is an in-app timestamp, not
   a cryptographic signature — the spec is explicit that the platform must never issue its own),
   encrypted object storage / KMS, PDPL compliance paperwork (DPO registration, processing license,
