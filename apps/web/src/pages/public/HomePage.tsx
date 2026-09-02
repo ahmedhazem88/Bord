@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { PublicLayout } from "../../components/PublicLayout";
+import { DevicePreview } from "../../components/DevicePreview";
 import { useDocumentHead } from "../../hooks/useDocumentHead";
 
 const TITLE = "Bord — Governance Platform & Professional Network for FRA-Regulated Entities";
@@ -37,6 +38,8 @@ export function HomePage() {
           </Link>
         </div>
       </section>
+
+      <DevicePreview />
 
       <section className="feature-grid">
         <article className="card">

@@ -468,3 +468,327 @@ table.flat-table th {
     opacity: 0;
   }
 }
+
+/* Device preview (landing page "see it in action" section) — a browser
+   mockup and a phone mockup composed so the phone overlaps the browser's
+   bottom-right corner, a standard landing-page convention for showing web
+   + mobile together without implying they're literally the same screen at
+   two sizes. Illustrative content only (see DevicePreview.tsx) — no images,
+   built from the same tokens as the rest of the site so it reads as Bord's
+   own screens, not a generic stock mockup. */
+.device-preview {
+  padding: var(--space-5) 0;
+  text-align: center;
+}
+
+.device-preview-copy {
+  max-width: 560px;
+  margin: 0 auto var(--space-5);
+}
+
+.device-preview-copy h2 {
+  margin-bottom: var(--space-1);
+}
+
+.device-preview-stage {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.browser-mockup {
+  flex: 0 1 700px;
+  text-align: left;
+  background: var(--color-background);
+  border: 1px solid var(--color-hairline);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.browser-chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.browser-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-hairline);
+}
+
+.browser-url {
+  margin-left: var(--space-2);
+  flex: 1;
+  max-width: 260px;
+  font-size: 11px;
+  color: var(--color-subtle);
+  background: var(--color-background);
+  border: 1px solid var(--color-hairline);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.browser-screen {
+  display: flex;
+  min-height: 320px;
+}
+
+.mock-sidebar {
+  width: 120px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-hairline);
+  padding: var(--space-2) var(--space-1);
+}
+
+.mock-logo {
+  font-weight: 700;
+  font-size: 13px;
+  padding: 0 8px;
+  margin-bottom: var(--space-2);
+}
+
+.mock-nav-item {
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--color-subtle);
+  margin-bottom: 2px;
+}
+
+.mock-nav-active {
+  background: var(--color-background);
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.mock-main {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  /* Reserve a right-hand gutter clear of the phone mockup's overlap zone
+     (see .phone-mockup's negative margin below) — agenda cards and their
+     badges must never sit under the phone, whatever the exact overlap. */
+  padding-right: 110px;
+}
+
+.mock-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-subtle);
+  margin: 0 0 4px;
+}
+
+.mock-eyebrow-light {
+  margin-top: 4px;
+}
+
+.mock-heading {
+  font-size: 15px;
+  margin: 0 0 var(--space-2);
+}
+
+.mock-agenda-item {
+  border: 1px solid var(--color-hairline);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--color-background);
+}
+
+.mock-agenda-flagged {
+  border-color: var(--color-accent);
+}
+
+.mock-agenda-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.mock-agenda-item-head strong {
+  font-size: 12px;
+}
+
+.mock-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.mock-badge-warn {
+  background: #d700151f;
+  color: #d70015;
+}
+
+.mock-badge-ok {
+  background: #1d8a4c1f;
+  color: #1d8a4c;
+}
+
+.mock-agenda-note {
+  font-size: 10.5px;
+  color: var(--color-subtle);
+  margin: 0 0 8px;
+}
+
+.mock-agenda-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mock-btn {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.mock-btn-primary {
+  background: var(--color-accent);
+  color: #ffffff;
+}
+
+.mock-btn-ghost {
+  border: 1px solid var(--color-hairline);
+  color: var(--color-ink);
+}
+
+.mock-btn-block {
+  display: block;
+  text-align: center;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.phone-mockup {
+  position: relative;
+  flex: 0 0 220px;
+  width: 220px;
+  margin-left: -64px;
+  margin-bottom: -28px;
+  z-index: 2;
+  background: #1d1d1f;
+  border-radius: 36px;
+  padding: 12px;
+  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.4);
+}
+
+.phone-notch {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60px;
+  height: 14px;
+  background: #1d1d1f;
+  border-radius: 8px;
+  z-index: 2;
+}
+
+.phone-screen {
+  position: relative;
+  text-align: left;
+  background: var(--color-background);
+  border-radius: 24px;
+  padding: 28px 14px 16px;
+  min-height: 380px;
+  overflow: hidden;
+}
+
+.mock-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #1d8a4c;
+  background: #1d8a4c1f;
+  padding: 3px 9px;
+  border-radius: 999px;
+  margin-bottom: var(--space-2);
+}
+
+.mock-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #1d8a4c;
+}
+
+.mock-tally {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--color-surface);
+  margin: var(--space-2) 0 6px;
+}
+
+.mock-tally-for {
+  background: var(--color-accent);
+}
+
+.mock-tally-against {
+  background: var(--color-hairline);
+}
+
+.mock-tally-label {
+  font-size: 10px;
+  color: var(--color-subtle);
+  margin: 0 0 var(--space-3);
+}
+
+.mock-vote-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: var(--space-2);
+}
+
+.mock-quorum-note {
+  font-size: 10px;
+  color: var(--color-subtle);
+  text-align: center;
+  margin: 0;
+}
+
+@media (max-width: 860px) {
+  .device-preview-stage {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .browser-mockup {
+    flex-basis: auto;
+    width: 100%;
+  }
+
+  .phone-mockup {
+    margin-left: 0;
+    margin-bottom: 0;
+    margin-top: var(--space-3);
+  }
+
+  /* The phone no longer overlaps the browser once stacked — the right-hand
+     gutter reserved for it in .mock-main would just cramp this narrower
+     layout for nothing. */
+  .mock-main {
+    padding-right: var(--space-3);
+  }
+}
