@@ -316,6 +316,7 @@ model User {
   reviewedVerifications Capacity[]              @relation("CapacityReviewer")
   interestDeclarations InterestDeclaration[]
   documentAccessLogs   DocumentAccessLog[]
+  boardElectionCandidacies BoardElectionCandidate[]
 
   @@index([email])
 }
@@ -362,6 +363,7 @@ model Entity {
   auditLogEntries      AuditLog[]
   minutes              Minutes[]
   governingDocuments   GoverningDocument[]
+  boardElections       BoardElection[]
 
   @@index([registrationNumber])
 }
@@ -411,6 +413,7 @@ model Capacity {
   gaSecretaryForMeetings Meeting[]     @relation("MeetingGaSecretary")
   proxiesGranted        Proxy[]        @relation("ProxyGrantor")
   proxiesReceived       Proxy[]        @relation("ProxyGrantee")
+  cumulativeVoteAllocations CumulativeVoteAllocation[]
 
   @@index([entityId, role])
   @@index([userId])
@@ -636,9 +639,72 @@ model AgendaItem {
   resolutions Resolution[]
   documents   Document[]
   foundingForBoard Board[]
+  boardElection BoardElection?
 
   @@index([meetingId])
   @@index([meetingId, status])
+}
+
+// ---------- Cumulative voting for board elections (spec section 6, 2018
+// Companies Law amendment) ----------
+//
+// Genuinely different from the Resolution/Vote FOR-AGAINST-ABSTAIN-RECUSED
+// model above: each GA member's voting power for the whole election is
+// their shares times the number of open seats, freely allocable across
+// candidates (concentrated on one or split), specifically so a minority
+// shareholder can concentrate enough votes to guarantee at least one seat —
+// not a per-candidate up/down vote. See elections/engine.ts.
+enum BoardElectionStatus {
+  OPEN
+  CLOSED
+}
+
+model BoardElection {
+  id           String              @id @default(cuid())
+  entityId     String
+  entity       Entity              @relation(fields: [entityId], references: [id])
+  agendaItemId String              @unique
+  agendaItem   AgendaItem          @relation(fields: [agendaItemId], references: [id])
+  seatsOpen    Int
+  status       BoardElectionStatus @default(OPEN)
+  closedAt     DateTime?
+  createdAt    DateTime            @default(now())
+
+  candidates  BoardElectionCandidate[]
+  allocations CumulativeVoteAllocation[]
+
+  @@index([entityId, status])
+}
+
+model BoardElectionCandidate {
+  id           String        @id @default(cuid())
+  electionId   String
+  election     BoardElection @relation(fields: [electionId], references: [id])
+  userId       String
+  user         User          @relation(fields: [userId], references: [id])
+  proposedRole GovernanceRole
+  elected      Boolean       @default(false)
+  appointingResolutionId String?
+
+  allocations CumulativeVoteAllocation[]
+
+  @@unique([electionId, userId])
+  @@index([electionId])
+}
+
+model CumulativeVoteAllocation {
+  id              String                  @id @default(cuid())
+  electionId      String
+  election        BoardElection           @relation(fields: [electionId], references: [id])
+  candidateId     String
+  candidate       BoardElectionCandidate  @relation(fields: [candidateId], references: [id])
+  voterCapacityId String
+  voterCapacity   Capacity                @relation(fields: [voterCapacityId], references: [id])
+  votes           Float
+  updatedAt       DateTime                @updatedAt
+
+  @@unique([candidateId, voterCapacityId])
+  @@index([electionId, voterCapacityId])
 }
 
 model MeetingAttendance {
