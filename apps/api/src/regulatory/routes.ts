@@ -3,22 +3,30 @@ import { z } from "zod";
 import { withTenantContext, withoutTenantContext } from "../db.js";
 import { requireEntityAccess, requirePlatformAdmin, requireRole } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
+import { syncOverdueObligations } from "./obligations.js";
 
 /**
- * Epic 6 (Regulatory Calendar) + Epic 7 (Regulatory Change Monitoring) —
- * scaffolded. Built here: the RegulatoryObligation/RegulatoryRule tables,
- * listing, and rule-version updates with citation tracking.
- * NOT built yet: escalating 30/14/3-day reminder jobs, auto-regeneration of
- * the next occurrence on completion, and the scheduled scan for GAFI/FRA
- * circulars — those need a job scheduler, which is a follow-up.
+ * Epic 6 (Regulatory Calendar) + Epic 7 (Regulatory Change Monitoring).
+ * Built here: the RegulatoryObligation/RegulatoryRule tables, listing, and
+ * rule-version updates with citation tracking. Obligations are actually
+ * seeded now (regulatory/obligations.ts, called from entity onboarding,
+ * minutes finalization, and board/auditor appointment — see that file for
+ * why each type is tied to the event it is), auto-regenerate their next
+ * occurrence on completion (below), and get persisted OVERDUE with a
+ * distinct audit-log entry the next time they're read past their deadline
+ * (syncOverdueObligations) even without a scheduler.
+ * NOT built yet: escalating 30/14/3-day PUSH reminders (there's no
+ * email/SMS infrastructure — see compliance/routes.ts) and the scheduled
+ * scan for GAFI/FRA circulars, both of which need a real job scheduler.
  */
 
 export async function registerRegulatoryRoutes(app: FastifyInstance): Promise<void> {
   app.get("/entities/:entityId/regulatory-obligations", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
-    const obligations = await withTenantContext(entityId, (tx) =>
-      tx.regulatoryObligation.findMany({ where: { entityId }, orderBy: { nextDueAt: "asc" } }),
-    );
+    const obligations = await withTenantContext(entityId, async (tx) => {
+      await syncOverdueObligations(tx, entityId);
+      return tx.regulatoryObligation.findMany({ where: { entityId }, orderBy: { nextDueAt: "asc" } });
+    });
     return reply.send(obligations);
   });
 

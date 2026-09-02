@@ -73,6 +73,11 @@ export interface CastVoteInput {
   // (spec section 6). The resulting Vote is recorded against the GRANTOR's
   // capacity and weight — the caller is just the hand casting it.
   onBehalfOfCapacityId?: string;
+  // Required to cast anything other than RECUSED once the voter has an
+  // active declared interest naming something this agenda item is actually
+  // about (spec section 9) — a soft, overridable default, unlike Art. 74's
+  // hard exclusion below.
+  interestOverrideReason?: string;
 }
 
 export async function castVote(tx: Prisma.TransactionClient, input: CastVoteInput) {
@@ -147,6 +152,24 @@ export async function castVote(tx: Prisma.TransactionClient, input: CastVoteInpu
     }
   }
 
+  // Interest registry (spec section 9): defaults to Recused, not a hard
+  // exclusion — Art. 74 above already forced it if that applies, so this
+  // only matters when it didn't.
+  let interestOverrideApplied = false;
+  if (!excludedByLaw) {
+    const declarations = await tx.interestDeclaration.findMany({ where: { capacityId: voter.capacityId, active: true } });
+    const itemText = `${resolution.agendaItem?.title ?? ""} ${resolution.agendaItem?.description ?? ""} ${resolution.title} ${resolution.description}`.toLowerCase();
+    const matched = declarations.find((d) => itemText.includes(d.relatedEntityName.toLowerCase()));
+    if (matched) {
+      if (input.interestOverrideReason) {
+        interestOverrideApplied = true;
+      } else {
+        value = "RECUSED";
+        recusalReason = `Declared-interest default recusal — ${matched.relatedEntityName} (${matched.natureOfInterest}); requested vote was ${input.value}. Pass interestOverrideReason to vote anyway.`;
+      }
+    }
+  }
+
   const vote = await tx.vote.upsert({
     where: { resolutionId_voterCapacityId: { resolutionId: resolution.id, voterCapacityId: voter.capacityId } },
     create: { resolutionId: resolution.id, voterCapacityId: voter.capacityId, proxyId, value, excludedByLaw, recusalReason, weight: voter.weight },
@@ -156,10 +179,17 @@ export async function castVote(tx: Prisma.TransactionClient, input: CastVoteInpu
   await appendAuditLog(tx, {
     entityId: resolution.entityId,
     actorUserId: input.voterUserId,
-    action: "VOTE_CAST",
+    action: interestOverrideApplied ? "VOTE_CAST_DESPITE_DECLARED_INTEREST" : "VOTE_CAST",
     tableName: "Vote",
     recordId: vote.id,
-    afterData: { resolutionId: resolution.id, value, excludedByLaw, weight: voter.weight, castAsProxyFor: input.onBehalfOfCapacityId },
+    afterData: {
+      resolutionId: resolution.id,
+      value,
+      excludedByLaw,
+      weight: voter.weight,
+      castAsProxyFor: input.onBehalfOfCapacityId,
+      ...(interestOverrideApplied ? { interestOverrideReason: input.interestOverrideReason } : {}),
+    },
   });
 
   return vote;

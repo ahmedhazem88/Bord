@@ -4,6 +4,7 @@ import { withTenantContext } from "../db.js";
 import { requireCapability, requireEntityAccess, requireRole } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
 import { generateMinutesContent } from "./generate.js";
+import { seedMinutesSubmissionObligations } from "../regulatory/obligations.js";
 
 /**
  * Board/GA minutes — spec section 6. Auto-generated from the meeting's own
@@ -252,6 +253,13 @@ export async function registerMinutesRoutes(app: FastifyInstance): Promise<void>
         const final = bothSigned
           ? await tx.minutes.update({ where: { id: minutesId }, data: { status: "FINAL" } })
           : await tx.minutes.update({ where: { id: minutesId }, data: { status: isChairman ? "CHAIRMAN_SIGNED" : "SECRETARY_SIGNED" } });
+
+        // The FRA/GAFI submission clocks (Epic 6) start running the moment
+        // minutes go FINAL, not before.
+        if (bothSigned) {
+          const meeting = await tx.meeting.findUniqueOrThrow({ where: { id: existing.meetingId }, select: { type: true } });
+          await seedMinutesSubmissionObligations(tx, entityId, meeting.type, new Date());
+        }
 
         await appendAuditLog(tx, {
           entityId,

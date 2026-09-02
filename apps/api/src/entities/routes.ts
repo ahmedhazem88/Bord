@@ -4,6 +4,7 @@ import { withTenantContext, withPlatformAdminContext } from "../db.js";
 import { requirePlatformAdmin } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
 import { ensureUniqueSlug } from "../public/slug.js";
+import { seedStandingObligations } from "../regulatory/obligations.js";
 
 const createEntitySchema = z.object({
   legalName: z.string().min(1),
@@ -50,6 +51,7 @@ export async function registerEntityRoutes(app: FastifyInstance): Promise<void> 
         data: { meetingId: foundingMeeting.id, order: 0, title: "Initial constitution of the board", description: "Entity onboarding" },
       });
       await tx.board.create({ data: { entityId: entity.id, foundingAgendaItemId: foundingAgendaItem.id } });
+      await seedStandingObligations(tx, entity.id, new Date());
       await appendAuditLog(tx, {
         entityId: entity.id,
         actorUserId: request.user.sub,

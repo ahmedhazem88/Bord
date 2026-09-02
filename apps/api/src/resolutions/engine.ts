@@ -1,6 +1,7 @@
 import type { Prisma, ResolutionType, GovernanceRole as PrismaGovernanceRole, RemunerationComponent, CommitteeType } from "@prisma/client";
 import { DEFAULT_EFFECT_BASIS, EXECUTIVE_ROLES, type EffectBasis } from "@bord/shared";
 import { appendAuditLog } from "../audit/auditLog.js";
+import { seedAppointmentObligations } from "../regulatory/obligations.js";
 
 /** Spec section 3: a committee chair must be non-executive. */
 function assertChairEligible(role: PrismaGovernanceRole): void {
@@ -136,6 +137,7 @@ async function applyEffect(
           active: false, // activation still gated on verification + disqualification checks (Epic 2)
         },
       });
+      await seedAppointmentObligations(tx, entityId, payload.role, resolutionDate);
       return { kind: "BOARD_APPOINTMENT", capacityId: capacity.id };
     }
     case "BOARD_REMOVAL": {
@@ -213,6 +215,7 @@ async function applyEffect(
         capacityIdByUserId.set(appt.userId, capacity.id);
         roleByUserId.set(appt.userId, appt.role);
         capacityIds.push(capacity.id);
+        await seedAppointmentObligations(tx, entityId, appt.role, resolutionDate);
       }
 
       for (const member of payload.gaMembers) {

@@ -23,13 +23,18 @@ import type { Prisma } from "@prisma/client";
  */
 
 export interface ComplianceFlag {
-  source: "GOVERNING_DOCUMENT" | "REGULATORY_RULE";
+  source: "GOVERNING_DOCUMENT" | "REGULATORY_RULE" | "INTEREST_DECLARATION";
   refId: string;
   documentType?: string;
   title: string;
   citation: string | null;
   excerpt: string;
   matchedTerms: string[];
+  // INTEREST_DECLARATION flags only: whose declared interest this is, so
+  // the Secretary/Chairman see it before the meeting starts (spec section
+  // 9 / Epic 9), not discovered mid-vote.
+  declaredByCapacityId?: string;
+  declaredByRole?: string;
 }
 
 const STOPWORDS = new Set([
@@ -98,11 +103,12 @@ export async function reviewAgendaItem(
   const itemTerms = significantTerms(`${title} ${description ?? ""}`);
   if (itemTerms.size === 0) return [];
 
-  const [documents, rules] = await Promise.all([
+  const [documents, rules, interestDeclarations] = await Promise.all([
     tx.governingDocument.findMany({ where: { entityId } }),
     // RegulatoryRule carries no entity-scoping RLS (it's the platform-wide
     // legal rule set, not per-tenant data) — readable from any tx.
     tx.regulatoryRule.findMany(),
+    tx.interestDeclaration.findMany({ where: { capacity: { entityId }, active: true }, include: { capacity: { select: { id: true, role: true } } } }),
   ]);
 
   const flags: ComplianceFlag[] = [];
@@ -134,6 +140,24 @@ export async function reviewAgendaItem(
       citation: rule.legalCitation,
       excerpt: rule.description,
       matchedTerms: matched,
+    });
+  }
+
+  // Interest registry (spec section 9): naming a declared related entity is
+  // a direct signal, not a term-overlap heuristic — a plain case-insensitive
+  // substring match on the declared name against the item's actual text.
+  const itemText = `${title} ${description ?? ""}`.toLowerCase();
+  for (const declaration of interestDeclarations) {
+    if (!itemText.includes(declaration.relatedEntityName.toLowerCase())) continue;
+    flags.push({
+      source: "INTEREST_DECLARATION",
+      refId: declaration.id,
+      title: `Declared interest — ${declaration.relatedEntityName}`,
+      citation: null,
+      excerpt: declaration.natureOfInterest,
+      matchedTerms: [declaration.relatedEntityName],
+      declaredByCapacityId: declaration.capacityId,
+      declaredByRole: declaration.capacity.role,
     });
   }
 

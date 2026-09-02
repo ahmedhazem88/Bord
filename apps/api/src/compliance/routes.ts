@@ -3,6 +3,7 @@ import type { RegulatoryObligationType } from "@prisma/client";
 import { withTenantContext, withoutTenantContext } from "../db.js";
 import { requireEntityAccess } from "../auth/rbac.js";
 import { escalationLevel, compareByUrgency } from "./alerts.js";
+import { syncOverdueObligations } from "../regulatory/obligations.js";
 
 /**
  * Compliance assistant — Epic 6/7. A search engine across everything the
@@ -44,7 +45,10 @@ export async function registerComplianceRoutes(app: FastifyInstance): Promise<vo
 
   app.get("/entities/:entityId/compliance/alerts", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
-    const obligations = await withTenantContext(entityId, (tx) => tx.regulatoryObligation.findMany({ where: { entityId } }));
+    const obligations = await withTenantContext(entityId, async (tx) => {
+      await syncOverdueObligations(tx, entityId);
+      return tx.regulatoryObligation.findMany({ where: { entityId } });
+    });
 
     const alerts = obligations
       .map((o) => ({

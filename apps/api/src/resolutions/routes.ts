@@ -56,6 +56,9 @@ const castVoteSchema = z.object({
   // Proxy-cast: vote on behalf of this GA member capacity via an active
   // Proxy grant to the caller (spec section 6).
   onBehalfOfCapacityId: z.string().optional(),
+  // Required to vote anything but RECUSED when a declared interest matches
+  // this agenda item (spec section 9) — a soft, overridable default.
+  interestOverrideReason: z.string().optional(),
 });
 
 export async function registerResolutionRoutes(app: FastifyInstance): Promise<void> {

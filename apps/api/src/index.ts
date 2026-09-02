@@ -19,6 +19,7 @@ import { registerProfileRoutes } from "./profile/routes.js";
 import { registerGoverningDocumentRoutes } from "./governing-documents/routes.js";
 import { registerHiringRoutes } from "./hiring/routes.js";
 import { registerElectionRoutes } from "./elections/routes.js";
+import { registerInterestRoutes } from "./interests/routes.js";
 
 async function main() {
   const app = Fastify({
@@ -55,6 +56,7 @@ async function main() {
   await registerGoverningDocumentRoutes(app);
   await registerHiringRoutes(app);
   await registerElectionRoutes(app);
+  await registerInterestRoutes(app);
 
   await app.listen({ port: env.PORT, host: "0.0.0.0" });
 }
