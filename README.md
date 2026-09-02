@@ -95,12 +95,21 @@ This is the Phase 1 architectural foundation, built in build-sequence order (PRD
   whoever sets the agenda, automatic agenda-item flagging against declared interests
   (`src/agenda/review.ts`), and a default-to-Recused vote for a matching declared interest — a soft,
   overridable default (`interestOverrideReason`) distinct from Art. 74's hard exclusion, logged as
-  its own audit action when overridden (`src/resolutions/voting.ts`).
-- **Scaffolded, not complete**: Regulatory Change Monitoring's scheduled scan (Epic 7), Remuneration
-  & Payouts' cap auto-calculation from financials (Epic 8), and Document Management's object storage
-  (Epic 10) are unbuilt. No frontend screens yet for the Epic 5/6/7 endpoints (voting, minutes
-  directory, compliance search, elections, interest declarations) or for the agenda preparation tool,
-  governing-documents library, and minutes circulation/verification — all API-only so far, verified
+  its own audit action when overridden (`src/resolutions/voting.ts`). Epic 8's remuneration cap is
+  now real too: a `FinancialStatement` per entity per fiscal year (net distributable profit),
+  recorded once a `FINANCIAL_STATEMENTS_APPROVAL` resolution reaches the terminal stage of its
+  Audit-Committee-then-Board approval chain; the 10% board remuneration cap (already-seeded
+  `RegulatoryRule`, AoA-overridable) is enforced at resolution-effect time for board-type
+  remuneration — before the record is created, not after — and exposed live via
+  `GET .../remuneration-cap-status` (`src/resolutions/engine.ts`, `src/remuneration/routes.ts`).
+  Tax-withholding auto-computation is explicitly NOT built: it needs the actual applicable Egyptian
+  withholding rate as a cited legal fact, which nothing given to this session specifies — `Payout`
+  still carries a manually-set `withheldTaxAmount` (defaults to 0), same as before.
+- **Scaffolded, not complete**: Regulatory Change Monitoring's scheduled scan (Epic 7) and Document
+  Management's object storage (Epic 10) are unbuilt. No frontend screens yet for the Epic 5/6/8
+  endpoints (voting, minutes directory, compliance search, elections, interest declarations,
+  remuneration cap status) or for the agenda preparation tool, governing-documents library, and
+  minutes circulation/verification — all API-only so far, verified
   via live end-to-end smoke tests rather than a UI. Virtual-attendance recording-retention
   enforcement, and the OGM/EGM invitation mechanics (newspaper publication, registered mail, GAFI/FRA
   copies, the 21-day notice window) are also not built — the latter needs a real decision on the
