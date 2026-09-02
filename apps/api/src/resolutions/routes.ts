@@ -8,6 +8,9 @@ import { MAJORITY_RULES } from "./majority.js";
 
 const createSchema = z.object({
   agendaItemId: z.string(),
+  // INITIAL_STRUCTURE is deliberately excluded — that type is only ever
+  // created through the onboarding bootstrap path in governance/routes.ts,
+  // never through this general-purpose endpoint.
   type: z.enum([
     "COMMITTEE_ASSIGNMENT",
     "MD_REMUNERATION",
@@ -18,6 +21,8 @@ const createSchema = z.object({
     "GA_SET_BOARD_REMUNERATION",
     "AOA_AMENDMENT",
     "CAPITAL_CHANGE",
+    "BUDGET_APPROVAL",
+    "FINANCIAL_STATEMENTS_APPROVAL",
   ]),
   title: z.string().min(1),
   description: z.string().min(1),
@@ -84,6 +89,46 @@ export async function registerResolutionRoutes(app: FastifyInstance): Promise<vo
       const { entityId, resolutionId } = request.params as { entityId: string; resolutionId: string };
       const { outcome, reason } = rejectSchema.parse(request.body);
       const updated = await withTenantContext(entityId, (tx) => rejectOrLapseResolution(tx, resolutionId, outcome, reason, request.user.sub));
+      return reply.send(updated);
+    },
+  );
+
+  // A prior chain stage passed (e.g. the Audit Committee approved the
+  // financial statements) and the engine auto-created the next stage —
+  // it has no agendaItemId yet since no meeting of the next body existed
+  // at that moment. This is the Secretary's queue for finding those and
+  // putting them on the next body's agenda.
+  app.get(
+    "/entities/:entityId/resolutions/awaiting-agenda",
+    { preHandler: [app.authenticate, requireCapability("agenda:set")] },
+    async (request, reply) => {
+      const { entityId } = request.params as { entityId: string };
+      const resolutions = await withTenantContext(entityId, (tx) =>
+        tx.resolution.findMany({ where: { entityId, agendaItemId: null, status: "DRAFT" }, orderBy: { createdAt: "asc" } }),
+      );
+      return reply.send(resolutions);
+    },
+  );
+
+  app.post(
+    "/entities/:entityId/resolutions/:resolutionId/attach-agenda-item",
+    { preHandler: [app.authenticate, requireCapability("agenda:set")] },
+    async (request, reply) => {
+      const { entityId, resolutionId } = request.params as { entityId: string; resolutionId: string };
+      const { agendaItemId } = z.object({ agendaItemId: z.string() }).parse(request.body);
+
+      const updated = await withTenantContext(entityId, async (tx) => {
+        const resolution = await tx.resolution.findUniqueOrThrow({ where: { id: resolutionId } });
+        if (resolution.status !== "DRAFT") {
+          throw Object.assign(new Error(`resolution is ${resolution.status}, not DRAFT`), { statusCode: 409 });
+        }
+        const agendaItem = await tx.agendaItem.findUniqueOrThrow({ where: { id: agendaItemId } });
+        if (agendaItem.status !== "CONFIRMED") {
+          throw Object.assign(new Error("agenda item must be CONFIRMED before a resolution can attach to it"), { statusCode: 409 });
+        }
+        return tx.resolution.update({ where: { id: resolutionId }, data: { agendaItemId } });
+      });
+
       return reply.send(updated);
     },
   );

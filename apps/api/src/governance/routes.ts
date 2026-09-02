@@ -58,31 +58,50 @@ export async function registerGovernanceRoutes(app: FastifyInstance): Promise<vo
     },
   );
 
-  const seedSchema = z.object({
-    userId: z.string(),
-    role: z.enum([
-      "CHAIRMAN",
-      "VICE_CHAIRMAN",
-      "MANAGING_DIRECTOR",
-      "CORPORATE_SECRETARY",
-      "EXECUTIVE_BOARD_MEMBER",
-      "NON_EXECUTIVE_BOARD_MEMBER",
-      "INDEPENDENT_BOARD_MEMBER",
-      "COMPLIANCE_OFFICER",
-    ]),
+  const BOARD_ROLE_ENUM = z.enum([
+    "CHAIRMAN",
+    "VICE_CHAIRMAN",
+    "MANAGING_DIRECTOR",
+    "CORPORATE_SECRETARY",
+    "EXECUTIVE_BOARD_MEMBER",
+    "NON_EXECUTIVE_BOARD_MEMBER",
+    "INDEPENDENT_BOARD_MEMBER",
+    "COMPLIANCE_OFFICER",
+  ]);
+
+  const initialStructureSchema = z.object({
+    boardAppointments: z.array(z.object({ userId: z.string(), role: BOARD_ROLE_ENUM })).min(1),
+    gaMembers: z.array(z.object({ userId: z.string(), sharePercentage: z.number().min(0).max(100) })).default([]),
+    committees: z
+      .array(
+        z.object({
+          name: z.string().min(1),
+          committeeType: z.enum(["AUDIT", "RISK", "REMUNERATION_AND_NOMINATION", "GOVERNANCE", "CUSTOM"]),
+          charterMandate: z.string().min(1),
+          quorumRule: z.string().min(1),
+          minIndependentCount: z.number().int().nonnegative().default(0),
+          memberUserIds: z.array(z.string()).min(1),
+          chairUserId: z.string().optional(),
+        }),
+      )
+      .default([]),
   });
 
-  // Bootstrap-only path: seeds the first board capacities through the same
-  // Resolution Engine everything else uses (via the founding agenda item
-  // created at onboarding), rather than writing Capacity directly. Closes
-  // itself once the board has passed composition validation at least once —
-  // after that, every change must go through a real convened meeting.
+  // Onboarding: establishes a company's ACTUAL current governance structure
+  // (read off their real Articles of Association / bylaws / cap table) as
+  // the baseline, in one bootstrap resolution — not built up one
+  // BOARD_APPOINTMENT at a time. Still goes through the Resolution Engine
+  // (via the founding agenda item created at entity onboarding), so the
+  // audit trail starts from a real resolution rather than a direct write.
+  // Closes itself once the board has passed composition validation at
+  // least once — after that, every change must go through a real convened
+  // meeting and its own resolution, same as before.
   app.post(
-    "/entities/:entityId/governance/board/seed-initial-capacity",
+    "/entities/:entityId/governance/board/establish-initial-structure",
     { preHandler: [app.authenticate, requirePlatformAdmin] },
     async (request, reply) => {
       const { entityId } = request.params as { entityId: string };
-      const body = seedSchema.parse(request.body);
+      const body = initialStructureSchema.parse(request.body);
 
       const result = await withTenantContext(entityId, async (tx) => {
         const board = await tx.board.findUniqueOrThrow({ where: { entityId } });
@@ -95,42 +114,28 @@ export async function registerGovernanceRoutes(app: FastifyInstance): Promise<vo
           throw Object.assign(new Error("entity has no founding agenda item on record"), { statusCode: 500 });
         }
 
+        const boardUserIds = new Set(body.boardAppointments.map((a) => a.userId));
+        for (const c of body.committees) {
+          for (const memberUserId of c.memberUserIds) {
+            if (!boardUserIds.has(memberUserId)) {
+              throw Object.assign(new Error(`committee "${c.name}" lists a member (${memberUserId}) who isn't among boardAppointments`), {
+                statusCode: 400,
+              });
+            }
+          }
+        }
+
         const resolution = await createResolution(tx, {
           entityId,
           agendaItemId: board.foundingAgendaItemId,
-          type: "BOARD_APPOINTMENT",
-          title: `Initial appointment — ${body.role}`,
-          description: "Bootstrap appointment during entity onboarding.",
+          type: "INITIAL_STRUCTURE",
+          title: "Initial governance structure (onboarding)",
+          description: "Baseline board, committee, and GA structure established from the entity's onboarding documents.",
           requiredMajority: "N/A_BOOTSTRAP",
           actorUserId: request.user.sub,
         });
 
-        const passed = await passResolution(tx, resolution.id, request.user.sub, {
-          type: "BOARD_APPOINTMENT",
-          userId: body.userId,
-          role: body.role,
-        });
-
-        // Bootstrap-only: normally activation waits on the Epic 2
-        // verification review by a Compliance Officer, but a brand-new
-        // entity has no Compliance Officer yet either. Platform Admin's
-        // act of seeding this capacity during onboarding stands in for that
-        // first review, logged explicitly as such.
-        const snapshot = passed.preResolutionSnapshot as { capacityId: string };
-        await tx.capacity.update({
-          where: { id: snapshot.capacityId },
-          data: { verificationStatus: "APPROVED", active: true, reviewedByUserId: request.user.sub, reviewedAt: new Date() },
-        });
-        await appendAuditLog(tx, {
-          entityId,
-          actorUserId: request.user.sub,
-          action: "BOOTSTRAP_CAPACITY_AUTO_ACTIVATED",
-          tableName: "Capacity",
-          recordId: snapshot.capacityId,
-          afterData: { reason: "onboarding bootstrap seed, no Compliance Officer exists yet" },
-        });
-
-        return passed;
+        return passResolution(tx, resolution.id, request.user.sub, { type: "INITIAL_STRUCTURE", ...body });
       });
 
       return reply.code(201).send(result);

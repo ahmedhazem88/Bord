@@ -1,9 +1,22 @@
 # Bord
 
-Governance platform for FRA-regulated non-bank financial entities (Phase 1) — insurance, leasing,
-factoring, mortgage finance, microfinance, and brokerage firms in Egypt. See the project's PRD and
-MVP spec (in the originating conversation/docs) for the full product and legal requirements this
-build implements.
+A governance management platform for FRA-regulated non-bank financial entities in Egypt —
+insurance, leasing, factoring, mortgage finance, microfinance, and brokerage firms. It organizes
+governance procedures for a governance body's own institutions (General Assembly, Board,
+committees): formation, appointment, and authorization; scheduling by whoever has that right under
+law and bylaws (Chairman, Vice Chairman, committee chairs, or a qualifying number of members);
+agenda management with automatic review against applicable law and the entity's own governing
+documents; meetings/conferencing, voting, and context-based quorum management; resolutions
+management and how a passed resolution reflects prospectively onto the structure; remuneration;
+and searchable, smart documentation and archiving. Every governance role carries its own privileges
+and actions.
+
+In parallel, Bord is a professional network: companies search for and hire governance
+professionals — board members, committee members — directly into their governance structure, with
+"hire" starting the same real appointment process as any other appointment.
+
+See the project's PRD and MVP spec (in the originating conversation/docs) for the full product and
+legal requirements this build implements.
 
 ## Status
 
@@ -39,7 +52,18 @@ This is the Phase 1 architectural foundation, built in build-sequence order (PRD
   explicit PDPL consent, with real SEO (per-route meta/canonical/OG/JSON-LD, a dynamic sitemap,
   robots.txt/llms.txt, a custom 404) and a self-service publish/withdraw UI on the dashboard and
   entity page. The full marketplace layer beyond that — search/filters, messaging, applications,
-  endorsements — is intentionally out of scope for this pass.
+  endorsements — is intentionally out of scope for this pass; hiring itself (below) is not.
+- **Governance re-scope**: onboarding establishes a company's actual current governance structure
+  (board, committees, GA/shareholders with share percentages) as the baseline in one resolution,
+  replacing the old one-role-at-a-time bootstrap; Committee Chairs (a `CommitteeMembership.isChair`
+  fact, independent of their base board role) can schedule their own committee's meetings, not just
+  Chairman/Vice Chairman/MD/Secretary; multi-stage resolution approval chains (Financial Statements
+  and Budget approval: Audit Committee, then Board, each a real resolution voted at its own body's
+  own meeting) are configurable per entity from their bylaws via the same RegulatoryRuleOverride
+  mechanism as every other bylaw-configurable rule, not hardcoded special cases; and hiring a
+  professional-network profile into an entity's governance structure creates a real proposed agenda
+  item that, once the Secretary confirms it, auto-creates the DRAFT appointment resolution the board
+  votes on — the same appointment path as any other, not a side channel.
 - **Scaffolded, not complete**: Regulatory Change Monitoring's scheduled scan (Epic 7 — no job
   scheduler exists, so alerts are pull/computed, not pushed — see `src/compliance/routes.ts`),
   Remuneration & Payouts (Epic 8 — no cap auto-calculation from financials), Document Management &
@@ -83,9 +107,12 @@ must not have `BYPASSRLS` — that's what makes the tenant-isolation guarantee r
 migration for the exact grants.
 
 The very first entity onboarded has nobody yet holding board privileges to convene a meeting;
-`POST /entities/:id/governance/board/seed-initial-capacity` (platform-admin only) seeds the first
-board/compliance-officer capacities through the same Resolution Engine everything else uses, and
-closes itself once the board passes composition validation once.
+`POST /entities/:id/governance/board/establish-initial-structure` (platform-admin only) establishes
+the company's actual current governance structure — board appointments, GA members with their share
+percentages, and committees with their memberships — as the baseline, in one bootstrap resolution
+through the same Resolution Engine everything else uses, rather than one appointment at a time. It
+closes itself once the board passes composition validation once; every change after that goes
+through a real convened meeting and its own resolution.
 
 ## Deploying to production
 

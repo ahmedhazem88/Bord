@@ -13,7 +13,10 @@ export type ResolutionType =
   | "BOARD_REMOVAL"
   | "GA_SET_BOARD_REMUNERATION"
   | "AOA_AMENDMENT"
-  | "CAPITAL_CHANGE";
+  | "CAPITAL_CHANGE"
+  | "INITIAL_STRUCTURE"
+  | "BUDGET_APPROVAL"
+  | "FINANCIAL_STATEMENTS_APPROVAL";
 
 /** Statutory default effect basis per resolution type — overridable per-entity via RegulatoryRule custom override (PRD 5.4, spec section 8). */
 export const DEFAULT_EFFECT_BASIS: Record<ResolutionType, EffectBasis> = {
@@ -26,6 +29,14 @@ export const DEFAULT_EFFECT_BASIS: Record<ResolutionType, EffectBasis> = {
   GA_SET_BOARD_REMUNERATION: "AUTHORIZATION_EFFECTIVE",
   AOA_AMENDMENT: "AUTHORIZATION_EFFECTIVE",
   CAPITAL_CHANGE: "AUTHORIZATION_EFFECTIVE",
+  // Onboarding baseline is immediate, not subject to GAFI ratification —
+  // it establishes the starting record, it doesn't change one.
+  INITIAL_STRUCTURE: "RESOLUTION_EFFECTIVE",
+  // Internal governance approvals — the regulatory filing obligation
+  // itself (e.g. FRA annual disclosure) is tracked separately as a
+  // RegulatoryObligation, not gated through GAFI authorization here.
+  BUDGET_APPROVAL: "RESOLUTION_EFFECTIVE",
+  FINANCIAL_STATEMENTS_APPROVAL: "RESOLUTION_EFFECTIVE",
 };
 
 export type VoteValue = "FOR" | "AGAINST" | "ABSTAIN" | "RECUSED";

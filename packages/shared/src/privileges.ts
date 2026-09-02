@@ -46,6 +46,11 @@ export const PRIVILEGE_MATRIX: PrivilegeGrant[] = [
   { action: "meeting:schedule", role: "VICE_CHAIRMAN", scope: "full" },
   { action: "meeting:schedule", role: "MANAGING_DIRECTOR", scope: "full" },
   { action: "meeting:schedule", role: "CORPORATE_SECRETARY", scope: "full" },
+  // Committee Chairs schedule their own committee's meetings only — not
+  // board/GA meetings. Full enforcement of that scope boundary (which
+  // committee) lives in meetings/routes.ts, since it depends on which
+  // specific committee is named in the request, not just the caller's role.
+  { action: "meeting:schedule", role: "COMMITTEE_CHAIR", scope: "committee_scoped" },
 
   { action: "agenda:set", role: "CHAIRMAN", scope: "full" },
   { action: "agenda:set", role: "VICE_CHAIRMAN", scope: "full" },

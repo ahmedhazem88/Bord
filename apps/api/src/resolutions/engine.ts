@@ -30,7 +30,32 @@ export type ResolutionEffectPayload =
       // linked resolution"). Omit for a resolution with no structural effect.
       committee?: { name: string; committeeType: CommitteeType; charterMandate: string; quorumRule: string; minIndependentCount: number };
     }
-  | { type: "AOA_AMENDMENT" | "CAPITAL_CHANGE"; description: string };
+  | { type: "AOA_AMENDMENT" | "CAPITAL_CHANGE"; description: string }
+  | {
+      // Onboarding bootstrap only — establishes a company's current
+      // governance structure (from their actual legal documents) as the
+      // baseline in one shot, instead of one BOARD_APPOINTMENT at a time.
+      // Committee members must be drawn from boardAppointments' userIds
+      // (a committee seat is held by a board capacity).
+      type: "INITIAL_STRUCTURE";
+      boardAppointments: { userId: string; role: PrismaGovernanceRole; startDate?: Date }[];
+      gaMembers: { userId: string; sharePercentage: number; startDate?: Date }[];
+      committees: {
+        name: string;
+        committeeType: CommitteeType;
+        charterMandate: string;
+        quorumRule: string;
+        minIndependentCount: number;
+        memberUserIds: string[];
+        chairUserId?: string;
+      }[];
+    }
+  | {
+      // Approval-only — no structural table changes, just marks the record
+      // approved at whichever stage this is. See resolveApprovalChain.
+      type: "BUDGET_APPROVAL" | "FINANCIAL_STATEMENTS_APPROVAL";
+      description: string;
+    };
 
 export interface CreateResolutionInput {
   entityId: string;
@@ -58,6 +83,29 @@ async function resolveEffectBasis(tx: Prisma.TransactionClient, entityId: string
   if (rule) return rule.currentValue as unknown as EffectBasis;
 
   return DEFAULT_EFFECT_BASIS[type as keyof typeof DEFAULT_EFFECT_BASIS];
+}
+
+/**
+ * The sequence of approving bodies a resolution type must pass through
+ * (e.g. Financial Statements: Audit Committee, then Board), configurable
+ * per entity from their actual bylaws via the same RegulatoryRuleOverride
+ * mechanism as every other bylaw-configurable rule in this codebase — not
+ * two hardcoded special cases. Each entry is a CommitteeType name or the
+ * literal "BOARD". Unconfigured types default to a single stage (today's
+ * behavior, unchanged): resolveApprovalChain never causes an existing
+ * resolution to auto-advance unless a chain longer than 1 is on record.
+ */
+async function resolveApprovalChain(tx: Prisma.TransactionClient, entityId: string, type: ResolutionType): Promise<string[]> {
+  const ruleKey = `APPROVAL_CHAIN_${type}`;
+  const override = await tx.regulatoryRuleOverride.findFirst({
+    where: { entityId, rule: { ruleKey }, status: "CUSTOM_OVERRIDE" },
+  });
+  if (override) return override.value as unknown as string[];
+
+  const rule = await tx.regulatoryRule.findUnique({ where: { ruleKey } });
+  if (rule) return rule.currentValue as unknown as string[];
+
+  return ["BOARD"];
 }
 
 /** Applies a resolution's structural effect and returns a snapshot describing how to revert it. */
@@ -121,6 +169,84 @@ async function applyEffect(
       // recorded on the resolution itself; entity-record mutation is a
       // follow-up once the AoA/capital data model is built.
       return { kind: "NOT_YET_STRUCTURAL", note: payload.description };
+    case "BUDGET_APPROVAL":
+    case "FINANCIAL_STATEMENTS_APPROVAL":
+      // No Capacity/Committee effect — approval itself is the record. The
+      // interesting behavior (advancing to the next chain stage instead of
+      // finalizing) lives in passResolution, not here.
+      return { kind: "NONE" };
+    case "INITIAL_STRUCTURE": {
+      const capacityIdByUserId = new Map<string, string>();
+      const capacityIds: string[] = [];
+
+      for (const appt of payload.boardAppointments) {
+        const capacity = await tx.capacity.create({
+          data: {
+            userId: appt.userId,
+            entityId,
+            role: appt.role,
+            startDate: appt.startDate ?? resolutionDate,
+            appointingResolutionId: resolutionId,
+            // Onboarding baseline stands in for the Epic 2 verification
+            // review, same rationale as the bootstrap path it replaces:
+            // there's no Compliance Officer yet to have done that review.
+            verificationStatus: "APPROVED",
+            active: true,
+          },
+        });
+        capacityIdByUserId.set(appt.userId, capacity.id);
+        capacityIds.push(capacity.id);
+      }
+
+      for (const member of payload.gaMembers) {
+        const capacity = await tx.capacity.create({
+          data: {
+            userId: member.userId,
+            entityId,
+            role: "GA_MEMBER",
+            startDate: member.startDate ?? resolutionDate,
+            sharePercentage: member.sharePercentage,
+            appointingResolutionId: resolutionId,
+            verificationStatus: "APPROVED",
+            active: true,
+          },
+        });
+        capacityIds.push(capacity.id);
+      }
+
+      const committeeIds: string[] = [];
+      const membershipIds: string[] = [];
+      for (const c of payload.committees) {
+        const committee = await tx.committee.create({
+          data: {
+            entityId,
+            name: c.name,
+            type: c.committeeType,
+            charterMandate: c.charterMandate,
+            quorumRule: c.quorumRule,
+            minIndependentCount: c.minIndependentCount,
+            foundingResolutionId: resolutionId,
+          },
+        });
+        committeeIds.push(committee.id);
+        for (const memberUserId of c.memberUserIds) {
+          const capacityId = capacityIdByUserId.get(memberUserId);
+          if (!capacityId) continue; // committee seats are held by board capacities created above
+          const membership = await tx.committeeMembership.create({
+            data: {
+              committeeId: committee.id,
+              capacityId,
+              isChair: memberUserId === c.chairUserId,
+              startDate: resolutionDate,
+              appointingResolutionId: resolutionId,
+            },
+          });
+          membershipIds.push(membership.id);
+        }
+      }
+
+      return { kind: "INITIAL_STRUCTURE", capacityIds, committeeIds, membershipIds };
+    }
     case "PROCEDURAL": {
       if (!payload.committee) return { kind: "NONE" };
       const committee = await tx.committee.create({
@@ -163,6 +289,17 @@ async function revertEffect(tx: Prisma.TransactionClient, snapshot: Record<strin
     case "COMMITTEE_FOUNDED":
       await tx.committee.update({ where: { id: snapshot.committeeId as string }, data: { dissolvedAt: new Date() } });
       return;
+    case "INITIAL_STRUCTURE": {
+      const capacityIds = snapshot.capacityIds as string[];
+      const committeeIds = snapshot.committeeIds as string[];
+      for (const id of capacityIds) {
+        await tx.capacity.update({ where: { id }, data: { active: false, endDate: new Date() } });
+      }
+      for (const id of committeeIds) {
+        await tx.committee.update({ where: { id }, data: { dissolvedAt: new Date() } });
+      }
+      return;
+    }
     case "NOT_YET_STRUCTURAL":
     case "NONE":
       return;
@@ -232,6 +369,37 @@ export async function passResolution(
     beforeData: { status: resolution.status },
     afterData: { status: nextStatus, effectBasis: resolution.effectBasis },
   });
+
+  // Multi-stage approval chain: this stage genuinely passed at its own
+  // body's own meeting (status above reflects that truthfully), but if it
+  // isn't the chain's terminal stage the matter isn't done — spawn the
+  // next stage now so it's ready for the Secretary to put on the next
+  // body's agenda, rather than treating this pass as final.
+  const chain = await resolveApprovalChain(tx, resolution.entityId, resolution.type);
+  if (resolution.chainStage < chain.length) {
+    const next = await tx.resolution.create({
+      data: {
+        entityId: resolution.entityId,
+        type: resolution.type,
+        title: resolution.title,
+        description: resolution.description,
+        requiredMajority: resolution.requiredMajority,
+        effectBasis: resolution.effectBasis,
+        status: "DRAFT",
+        chainStage: resolution.chainStage + 1,
+        precedingResolutionId: resolution.id,
+        proposedEffect: (resolution.proposedEffect ?? undefined) as Prisma.InputJsonValue | undefined,
+      },
+    });
+    await appendAuditLog(tx, {
+      entityId: resolution.entityId,
+      actorUserId,
+      action: "RESOLUTION_CHAIN_ADVANCED",
+      tableName: "Resolution",
+      recordId: next.id,
+      afterData: { precedingResolutionId: resolution.id, chainStage: next.chainStage, nextBody: chain[resolution.chainStage] },
+    });
+  }
 
   return updated;
 }

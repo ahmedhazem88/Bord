@@ -58,6 +58,17 @@ enum ResolutionType {
   GA_SET_BOARD_REMUNERATION
   AOA_AMENDMENT
   CAPITAL_CHANGE
+  // Onboarding-only: establishes a company's current governance structure
+  // (board, committees, GA members) as the baseline in one bootstrap
+  // resolution, from their actual legal documents — replaces seeding
+  // capacities one at a time. See resolutions/engine.ts's INITIAL_STRUCTURE
+  // effect and governance/routes.ts's establish-initial-structure endpoint.
+  INITIAL_STRUCTURE
+  // Multi-stage approval chain types (spec: financial statements and budget
+  // approval must pass the Audit Committee before the Board) — see
+  // resolveApprovalChain in resolutions/engine.ts.
+  BUDGET_APPROVAL
+  FINANCIAL_STATEMENTS_APPROVAL
 }
 
 enum ResolutionStatus {
@@ -457,6 +468,18 @@ model Resolution {
   // the voting engine's close-and-tally step can apply it automatically
   // once the required majority is reached — see resolutions/voting.ts.
   proposedEffect         Json?
+
+  // Multi-stage approval chain (e.g. Financial Statements: Audit Committee
+  // then Board) — each stage is its own real resolution, voted on at its
+  // own body's own meeting. chainStage counts from 1; a resolution with no
+  // configured chain is stage 1 of 1. When a non-terminal stage passes, the
+  // engine creates the next stage linked here rather than finalizing —
+  // see resolveApprovalChain in resolutions/engine.ts.
+  chainStage              Int               @default(1)
+  precedingResolutionId   String?           @unique
+  precedingResolution     Resolution?       @relation("ResolutionChain", fields: [precedingResolutionId], references: [id])
+  succeedingResolution    Resolution?       @relation("ResolutionChain")
+
   createdAt              DateTime          @default(now())
   updatedAt              DateTime          @updatedAt
 
@@ -534,6 +557,13 @@ model AgendaItem {
   // agenda/review.ts. Re-runnable on demand; the most recent run is cached
   // here so the Secretary's review queue doesn't recompute on every list.
   complianceFlags       Json?
+
+  // Set when this item was proposed by the hiring workflow (a company
+  // "hiring" a professional network member) — the appointment/committee
+  // effect to hand to createResolution once the Secretary confirms this
+  // item, so the intended role isn't re-typed and can't drift from what
+  // was actually offered. See hiring/routes.ts.
+  suggestedResolutionEffect Json?
   complianceReviewedAt  DateTime?
 
   resolutions Resolution[]

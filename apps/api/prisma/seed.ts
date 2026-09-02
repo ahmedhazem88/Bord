@@ -33,6 +33,12 @@ async function main() {
     { ruleKey: "FRA_MINUTES_SUBMISSION_DAYS", description: "Window to submit GA/board minutes to the FRA", currentValue: 10, legalCitation: "FRA Decree 100/2020" },
     { ruleKey: "AUDITOR_MAX_TENURE_YEARS", description: "Maximum consecutive auditor tenure", currentValue: 6, legalCitation: "FRA auditor-rotation rules (see spec section 6)" },
     { ruleKey: "BOARD_REMUNERATION_CAP_PCT_OF_NET_DISTRIBUTABLE_PROFIT", description: "Aggregate board remuneration cap, after reserves and minimum dividend, absent an AoA override", currentValue: 10, legalCitation: "Egyptian jurisprudence on board remuneration (see spec section 9)" },
+    // Approval chains — resolveApprovalChain in resolutions/engine.ts reads
+    // these the same way it reads any other bylaw-configurable rule. A
+    // chain entry is a CommitteeType name or the literal "BOARD"; the last
+    // entry is the terminal stage.
+    { ruleKey: "APPROVAL_CHAIN_BUDGET_APPROVAL", description: "Approving bodies for annual budget approval, in order", currentValue: ["AUDIT", "BOARD"], legalCitation: "Corporate governance practice: budget review by the Audit Committee precedes Board approval" },
+    { ruleKey: "APPROVAL_CHAIN_FINANCIAL_STATEMENTS_APPROVAL", description: "Approving bodies for financial statements approval, in order", currentValue: ["AUDIT", "BOARD"], legalCitation: "Corporate governance practice: financial statements review by the Audit Committee precedes Board approval" },
   ];
 
   for (const rule of rules) {

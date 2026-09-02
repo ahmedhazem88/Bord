@@ -1,13 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import type { GovernanceRole, Prisma } from "@prisma/client";
 import { z } from "zod";
-import { can } from "@bord/shared";
+import { can, grantsFor } from "@bord/shared";
 import { withTenantContext } from "../db.js";
 import { requireCapability, requireEntityAccess } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
 import { computeQuorum, getMeetingRoster, resolveQuorumRules } from "./quorum.js";
 import { createMeetingRequest, escalateMeetingRequest, markMeetingRequestCalled, MeetingRequestError } from "./requests.js";
 import { reviewAgendaItem } from "../agenda/review.js";
+import { createResolution, type ResolutionEffectPayload } from "../resolutions/engine.js";
 
 /**
  * Epic 5 (Meeting & Conferencing).
@@ -81,11 +82,40 @@ const rsvpSchema = z.object({
 });
 
 export async function registerMeetingRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/entities/:entityId/meetings", { preHandler: [app.authenticate, requireCapability("meeting:schedule")] }, async (request, reply) => {
+  // Committee chairmanship isn't a capacity role — it's a per-committee
+  // CommitteeMembership.isChair flag, independent of whatever board role
+  // the chair otherwise holds (a NON_EXECUTIVE_BOARD_MEMBER who chairs the
+  // Audit Committee is the common case, not someone whose base capacity
+  // role is literally COMMITTEE_CHAIR). So the privileges matrix can only
+  // gate the entity-wide full-scope roles here; requireEntityAccess just
+  // proves entity standing, and the real scheduling authority — full scope
+  // vs "chairs this specific committee" — is resolved against the request
+  // body inside the handler.
+  app.post("/entities/:entityId/meetings", { preHandler: [app.authenticate, requireEntityAccess()] }, async (request, reply) => {
     const { entityId } = request.params as { entityId: string };
     const body = scheduleMeetingSchema.parse(request.body);
 
     const meeting = await withTenantContext(entityId, async (tx) => {
+      const callerCapacity = await tx.capacity.findFirst({
+        where: { userId: request.user.sub, entityId, active: true, verificationStatus: "APPROVED" },
+        select: { id: true, role: true },
+      });
+      const hasFullScope = callerCapacity
+        ? grantsFor(callerCapacity.role as GovernanceRole, "meeting:schedule").some((g) => g.scope === "full")
+        : false;
+
+      if (!hasFullScope) {
+        if (body.type !== "COMMITTEE" || !body.committeeId || !callerCapacity) {
+          throw Object.assign(new Error("role does not grant 'meeting:schedule' at this entity"), { statusCode: 403 });
+        }
+        const chairs = await tx.committeeMembership.findFirst({
+          where: { committeeId: body.committeeId, capacityId: callerCapacity.id, isChair: true, endDate: null },
+        });
+        if (!chairs) {
+          throw Object.assign(new Error("you are not the chair of this committee"), { statusCode: 403 });
+        }
+      }
+
       const created = await tx.meeting.create({
         data: {
           entityId,
@@ -235,6 +265,26 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
           data: { status: "CONFIRMED", order: body.order, reviewedByUserId: request.user.sub, reviewedAt: new Date() },
         });
         await appendAuditLog(tx, { entityId, actorUserId: request.user.sub, action: "AGENDA_ITEM_CONFIRMED", tableName: "AgendaItem", recordId: itemId });
+
+        // Hiring-sourced items (see hiring/routes.ts) carry the intended
+        // appointment effect so confirming them actually starts the formal
+        // appointment process — a DRAFT resolution ready for the board to
+        // vote on — instead of just landing on the agenda with nothing to
+        // vote against.
+        if (updated.suggestedResolutionEffect) {
+          const effect = updated.suggestedResolutionEffect as unknown as ResolutionEffectPayload;
+          await createResolution(tx, {
+            entityId,
+            agendaItemId: itemId,
+            type: effect.type,
+            title: updated.title,
+            description: updated.description ?? updated.title,
+            requiredMajority: "BOARD_MAJORITY",
+            proposedEffect: effect,
+            actorUserId: request.user.sub,
+          });
+        }
+
         return updated;
       });
 
