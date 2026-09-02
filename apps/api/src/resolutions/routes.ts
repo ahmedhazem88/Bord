@@ -53,6 +53,9 @@ const rejectSchema = z.object({
 const castVoteSchema = z.object({
   value: z.enum(["FOR", "AGAINST", "ABSTAIN", "RECUSED"]),
   recusalReason: z.string().optional(),
+  // Proxy-cast: vote on behalf of this GA member capacity via an active
+  // Proxy grant to the caller (spec section 6).
+  onBehalfOfCapacityId: z.string().optional(),
 });
 
 export async function registerResolutionRoutes(app: FastifyInstance): Promise<void> {

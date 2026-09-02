@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { GovernanceRole, Prisma } from "@prisma/client";
 import { z } from "zod";
-import { can, grantsFor } from "@bord/shared";
+import { can, grantsFor, BOARD_ROLES } from "@bord/shared";
 import { withTenantContext } from "../db.js";
 import { requireCapability, requireEntityAccess } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
@@ -33,11 +33,23 @@ import { requiredMajorityForType } from "../resolutions/majority.js";
  * Chairman's mid-meeting flag or a confirmed 100%-unanimous addition
  * (every currently-attending capacity affirmatively confirming) can add one
  * — see the /agenda/lock and /agenda-items/unanimous-addition* endpoints.
- * Voting itself lives in resolutions/voting.ts, since a vote is cast
- * against a Resolution, not a Meeting.
- * NOT built yet: virtual-attendance recording-retention enforcement, and
+ * Also GA meeting roles: the Chairman appoints a secretary and exactly two
+ * vote counters for an OGM/EGM (PUT .../ga-roles). Also proxy grant/revoke
+ * (POST/DELETE .../proxies): eligibility depends on the entity's legal form
+ * (Entity.legalForm) — JSC allows any grantee, LLC only another
+ * quota-holder — and a non-board grantor can't appoint a sitting board
+ * member. Granting one marks the grantor's own attendance PROXY immediately
+ * so the existing quorum/capital calculation picks up their shares with no
+ * change to quorum.ts; actually casting a vote on the grantor's behalf is
+ * resolutions/voting.ts's castVote with onBehalfOfCapacityId. Voting itself
+ * lives in resolutions/voting.ts, since a vote is cast against a
+ * Resolution, not a Meeting.
+ * NOT built yet: virtual-attendance recording-retention enforcement,
  * actually notifying GAFI/the regulator on escalation (out-of-platform act
- * — this records that the window lapsed, nothing more).
+ * — this records that the window lapsed, nothing more), and hard-enforcing
+ * the entity's auditor's mandatory GA attendance (the AUDITOR role and its
+ * OGM convocation right exist — see meetings/requests.ts — but nothing yet
+ * blocks a GA meeting from proceeding without the auditor present).
  */
 
 const scheduleMeetingSchema = z.object({
@@ -50,6 +62,16 @@ const scheduleMeetingSchema = z.object({
   // EGM second meeting: within 30 days, valid at the lower capital floor.
   isSecondMeeting: z.boolean().default(false),
   firstMeetingId: z.string().optional(),
+});
+
+const gaRolesSchema = z.object({
+  secretaryCapacityId: z.string(),
+  voteCounterCapacityIds: z.array(z.string()).length(2, "exactly two vote counters are required (spec section 6)"),
+});
+
+const grantProxySchema = z.object({
+  granteeCapacityId: z.string(),
+  expiresAt: z.string().datetime().optional(),
 });
 
 const addAgendaItemSchema = z.object({
@@ -160,6 +182,163 @@ export async function registerMeetingRoutes(app: FastifyInstance): Promise<void>
     const meetings = await withTenantContext(entityId, (tx) => tx.meeting.findMany({ where: { entityId }, orderBy: { scheduledAt: "desc" } }));
     return reply.send(meetings);
   });
+
+  // GA meeting roles (spec section 6): every OGM/EGM requires a secretary
+  // and exactly two vote counters, appointed by the meeting chairman — a
+  // narrow, specific right, so checked directly against the CHAIRMAN
+  // capacity rather than the general agenda:set/meeting:schedule grants
+  // (a Vice Chairman or Secretary running the meeting doesn't get this one).
+  app.put(
+    "/entities/:entityId/meetings/:meetingId/ga-roles",
+    { preHandler: [app.authenticate, requireEntityAccess()] },
+    async (request, reply) => {
+      const { entityId, meetingId } = request.params as { entityId: string; meetingId: string };
+      const body = gaRolesSchema.parse(request.body);
+      if (body.voteCounterCapacityIds[0] === body.voteCounterCapacityIds[1]) {
+        return reply.code(400).send({ error: "the two vote counters must be different capacities" });
+      }
+
+      const meeting = await withTenantContext(entityId, async (tx) => {
+        const current = await tx.meeting.findUniqueOrThrow({ where: { id: meetingId } });
+        if (current.type !== "OGM" && current.type !== "EGM") {
+          throw Object.assign(new Error("GA roles only apply to OGM/EGM meetings"), { statusCode: 400 });
+        }
+        const callerCapacity = await tx.capacity.findFirst({
+          where: { userId: request.user.sub, entityId, active: true, verificationStatus: "APPROVED", role: "CHAIRMAN" },
+        });
+        if (!callerCapacity) {
+          throw Object.assign(new Error("only the Chairman appoints GA meeting roles"), { statusCode: 403 });
+        }
+        const referencedIds = [body.secretaryCapacityId, ...body.voteCounterCapacityIds];
+        const referencedCount = await tx.capacity.count({ where: { id: { in: referencedIds }, entityId } });
+        if (referencedCount !== referencedIds.length) {
+          throw Object.assign(new Error("secretary/vote-counter capacities must belong to this entity"), { statusCode: 400 });
+        }
+
+        const updated = await tx.meeting.update({
+          where: { id: meetingId },
+          data: { gaSecretaryCapacityId: body.secretaryCapacityId, gaVoteCounterCapacityIds: body.voteCounterCapacityIds },
+        });
+        await appendAuditLog(tx, {
+          entityId,
+          actorUserId: request.user.sub,
+          action: "GA_MEETING_ROLES_APPOINTED",
+          tableName: "Meeting",
+          recordId: meetingId,
+          afterData: body,
+        });
+        return updated;
+      });
+
+      return reply.send(meeting);
+    },
+  );
+
+  // Proxy grant (spec section 6): a GA member appoints someone to attend
+  // and vote in their place at a specific OGM/EGM. Eligibility depends on
+  // the entity's legal form — JSC allows any grantee (shareholder or not,
+  // since the 2018 amendment); LLC quota-holders may only appoint another
+  // quota-holder. Either way, a grantor who doesn't themselves sit on the
+  // board may not appoint a sitting board member as their proxy. Marks the
+  // grantor's own attendance PROXY immediately so the existing
+  // quorum/capital calculation (which already treats PROXY as present)
+  // picks up their shares without any change to quorum.ts.
+  app.post(
+    "/entities/:entityId/meetings/:meetingId/proxies",
+    { preHandler: [app.authenticate, requireCapability("proxy:grant_revoke")] },
+    async (request, reply) => {
+      const { entityId, meetingId } = request.params as { entityId: string; meetingId: string };
+      const body = grantProxySchema.parse(request.body);
+
+      const proxy = await withTenantContext(entityId, async (tx) => {
+        const [meeting, entity] = await Promise.all([
+          tx.meeting.findUniqueOrThrow({ where: { id: meetingId } }),
+          tx.entity.findUniqueOrThrow({ where: { id: entityId } }),
+        ]);
+        if (meeting.type !== "OGM" && meeting.type !== "EGM") {
+          throw Object.assign(new Error("proxies only apply to OGM/EGM meetings"), { statusCode: 400 });
+        }
+
+        const grantorCapacity = await tx.capacity.findFirst({
+          where: { userId: request.user.sub, entityId, role: "GA_MEMBER", active: true, verificationStatus: "APPROVED" },
+        });
+        if (!grantorCapacity) {
+          throw Object.assign(new Error("you must hold an active GA member capacity to grant a proxy"), { statusCode: 403 });
+        }
+        const granteeCapacity = await tx.capacity.findFirst({
+          where: { id: body.granteeCapacityId, entityId, active: true, verificationStatus: "APPROVED" },
+        });
+        if (!granteeCapacity) {
+          throw Object.assign(new Error("grantee capacity not found (or not active) at this entity"), { statusCode: 400 });
+        }
+        if (granteeCapacity.id === grantorCapacity.id) {
+          throw Object.assign(new Error("cannot appoint yourself as your own proxy"), { statusCode: 400 });
+        }
+        if (entity.legalForm === "LLC" && granteeCapacity.role !== "GA_MEMBER") {
+          throw Object.assign(new Error("LLC quota-holders may only appoint another quota-holder as proxy — no third-party proxies"), { statusCode: 403 });
+        }
+        if (BOARD_ROLES.includes(granteeCapacity.role)) {
+          const grantorAlsoOnBoard = await tx.capacity.findFirst({
+            where: { userId: request.user.sub, entityId, role: { in: [...BOARD_ROLES] }, active: true, verificationStatus: "APPROVED" },
+          });
+          if (!grantorAlsoOnBoard) {
+            throw Object.assign(
+              new Error("a shareholder who does not sit on the board may not appoint a sitting board member as their proxy"),
+              { statusCode: 403 },
+            );
+          }
+        }
+
+        const created = await tx.proxy.create({
+          data: {
+            meetingId,
+            grantorCapacityId: grantorCapacity.id,
+            granteeCapacityId: granteeCapacity.id,
+            expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+          },
+        });
+        await tx.meetingAttendance.upsert({
+          where: { meetingId_capacityId: { meetingId, capacityId: grantorCapacity.id } },
+          create: { meetingId, capacityId: grantorCapacity.id, mode: "PROXY", checkedInAt: new Date() },
+          update: { mode: "PROXY", checkedInAt: new Date() },
+        });
+        await appendAuditLog(tx, {
+          entityId,
+          actorUserId: request.user.sub,
+          action: "PROXY_GRANTED",
+          tableName: "Proxy",
+          recordId: created.id,
+          afterData: { grantorCapacityId: grantorCapacity.id, granteeCapacityId: granteeCapacity.id },
+        });
+        return created;
+      });
+
+      return reply.code(201).send(proxy);
+    },
+  );
+
+  // Revoke: only the grantor, and only before it's been voted against.
+  app.delete(
+    "/entities/:entityId/meetings/:meetingId/proxies/:proxyId",
+    { preHandler: [app.authenticate, requireCapability("proxy:grant_revoke")] },
+    async (request, reply) => {
+      const { entityId, proxyId } = request.params as { entityId: string; meetingId: string; proxyId: string };
+
+      await withTenantContext(entityId, async (tx) => {
+        const proxy = await tx.proxy.findUniqueOrThrow({ where: { id: proxyId }, include: { grantorCapacity: true, votes: true } });
+        if (proxy.grantorCapacity.userId !== request.user.sub) {
+          throw Object.assign(new Error("only the grantor can revoke their own proxy"), { statusCode: 403 });
+        }
+        if (proxy.votes.length > 0) {
+          throw Object.assign(new Error("cannot revoke a proxy that has already been voted against"), { statusCode: 409 });
+        }
+        await tx.proxy.delete({ where: { id: proxyId } });
+        await appendAuditLog(tx, { entityId, actorUserId: request.user.sub, action: "PROXY_REVOKED", tableName: "Proxy", recordId: proxyId });
+      });
+
+      return reply.code(204).send();
+    },
+  );
 
   // Set directly by the Secretary/Chairman/VC/MD — already final, so it's
   // CONFIRMED and self-reviewed immediately, unlike a board member's

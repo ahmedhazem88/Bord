@@ -30,14 +30,17 @@ export function requireCapability(action: Action) {
     }
 
     const userId = request.user.sub;
-    const role = await withTenantContext(entityId, (tx) =>
-      tx.capacity.findFirst({
+    // A person can hold more than one capacity at the same entity (e.g. a
+    // board member who is also a shareholder) — check the grant across ALL
+    // of them, not just whichever capacity happens to come back first.
+    const capacities = await withTenantContext(entityId, (tx) =>
+      tx.capacity.findMany({
         where: { userId, entityId, active: true, verificationStatus: "APPROVED" },
         select: { role: true },
       }),
     );
 
-    if (!role || !can(role.role as GovernanceRole, action)) {
+    if (!capacities.some((c) => can(c.role as GovernanceRole, action))) {
       await reply.code(403).send({ error: `role does not grant '${action}' at this entity`, requiredAction: action });
       return;
     }

@@ -68,6 +68,11 @@ export interface CastVoteInput {
   voterUserId: string;
   value: VoteValue;
   recusalReason?: string;
+  // Proxy-cast: vote on behalf of this GA member capacity, using an active
+  // Proxy grant from them to the caller's own capacity for this meeting
+  // (spec section 6). The resulting Vote is recorded against the GRANTOR's
+  // capacity and weight — the caller is just the hand casting it.
+  onBehalfOfCapacityId?: string;
 }
 
 export async function castVote(tx: Prisma.TransactionClient, input: CastVoteInput) {
@@ -77,9 +82,34 @@ export async function castVote(tx: Prisma.TransactionClient, input: CastVoteInpu
     throw new VotingError(`voting is closed — resolution is ${resolution.status}, not open for votes`, 409);
   }
 
-  const voter = await resolveVoterCapacity(tx, resolution.entityId, input.voterUserId, meeting.type, meeting.committeeId);
-  if (!voter) {
+  const granteeCapacity = await resolveVoterCapacity(tx, resolution.entityId, input.voterUserId, meeting.type, meeting.committeeId);
+  if (!granteeCapacity) {
     throw new VotingError("you do not hold a capacity entitled to vote at this meeting", 403);
+  }
+
+  let voter = granteeCapacity;
+  // Art. 74 checks the person whose remuneration/discharge is actually at
+  // stake — for a proxy-cast vote that's the grantor, not the capacity
+  // physically casting it.
+  let art74CheckUserId = input.voterUserId;
+  let proxyId: string | undefined;
+
+  if (input.onBehalfOfCapacityId) {
+    const proxy = await tx.proxy.findFirst({
+      where: {
+        meetingId: meeting.id,
+        grantorCapacityId: input.onBehalfOfCapacityId,
+        granteeCapacityId: granteeCapacity.capacityId,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+    });
+    if (!proxy) {
+      throw new VotingError("no active proxy grant from that capacity to you for this meeting", 403);
+    }
+    const grantorCapacity = await tx.capacity.findUniqueOrThrow({ where: { id: input.onBehalfOfCapacityId } });
+    voter = { capacityId: grantorCapacity.id, weight: grantorCapacity.sharePercentage ? Number(grantorCapacity.sharePercentage) : 1 };
+    art74CheckUserId = grantorCapacity.userId;
+    proxyId = proxy.id;
   }
 
   const [roster, attendance, rules] = await Promise.all([
@@ -92,6 +122,8 @@ export async function castVote(tx: Prisma.TransactionClient, input: CastVoteInpu
     throw new VotingError(`voting is blocked — quorum is not met (${quorum.basis})`, 409);
   }
 
+  // For a proxy-cast vote, this checks the GRANTOR's attendance — set to
+  // PROXY mode automatically when the proxy was granted (meetings/routes.ts).
   const isAttending = attendance.some((a) => a.capacityId === voter.capacityId && a.mode !== "ABSENT");
   if (!isAttending) {
     throw new VotingError("record your attendance before voting", 409);
@@ -106,7 +138,7 @@ export async function castVote(tx: Prisma.TransactionClient, input: CastVoteInpu
   if (resolution.type === "GA_SET_BOARD_REMUNERATION") {
     const now = new Date();
     const boardCapacity = await tx.capacity.findFirst({
-      where: { userId: input.voterUserId, entityId: resolution.entityId, role: { in: [...BOARD_ROLES] }, active: true, startDate: { lte: now }, OR: [{ endDate: null }, { endDate: { gt: now } }] },
+      where: { userId: art74CheckUserId, entityId: resolution.entityId, role: { in: [...BOARD_ROLES] }, active: true, startDate: { lte: now }, OR: [{ endDate: null }, { endDate: { gt: now } }] },
     });
     if (boardCapacity) {
       excludedByLaw = true;
@@ -117,8 +149,8 @@ export async function castVote(tx: Prisma.TransactionClient, input: CastVoteInpu
 
   const vote = await tx.vote.upsert({
     where: { resolutionId_voterCapacityId: { resolutionId: resolution.id, voterCapacityId: voter.capacityId } },
-    create: { resolutionId: resolution.id, voterCapacityId: voter.capacityId, value, excludedByLaw, recusalReason, weight: voter.weight },
-    update: { value, excludedByLaw, recusalReason, weight: voter.weight, timestamp: new Date() },
+    create: { resolutionId: resolution.id, voterCapacityId: voter.capacityId, proxyId, value, excludedByLaw, recusalReason, weight: voter.weight },
+    update: { value, excludedByLaw, recusalReason, weight: voter.weight, proxyId, timestamp: new Date() },
   });
 
   await appendAuditLog(tx, {
@@ -127,7 +159,7 @@ export async function castVote(tx: Prisma.TransactionClient, input: CastVoteInpu
     action: "VOTE_CAST",
     tableName: "Vote",
     recordId: vote.id,
-    afterData: { resolutionId: resolution.id, value, excludedByLaw, weight: voter.weight },
+    afterData: { resolutionId: resolution.id, value, excludedByLaw, weight: voter.weight, castAsProxyFor: input.onBehalfOfCapacityId },
   });
 
   return vote;

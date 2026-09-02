@@ -9,6 +9,8 @@ const createEntitySchema = z.object({
   legalName: z.string().min(1),
   registrationNumber: z.string().min(1),
   entityType: z.enum(["INSURANCE", "LEASING", "FACTORING", "MORTGAGE_FINANCE", "MICROFINANCE", "BROKERAGE"]),
+  // JSC vs LLC — governs proxy eligibility (spec section 6). Defaults JSC.
+  legalForm: z.enum(["JSC", "LLC"]).default("JSC"),
 });
 
 /**

@@ -47,6 +47,11 @@ enum EntityType {
   BROKERAGE
 }
 
+enum LegalForm {
+  JSC
+  LLC
+}
+
 enum EffectBasis {
   RESOLUTION_EFFECTIVE
   AUTHORIZATION_EFFECTIVE
@@ -322,6 +327,11 @@ model Entity {
   legalName          String
   registrationNumber String     @unique
   entityType         EntityType
+  // JSC vs LLC — governs proxy eligibility (spec section 6): JSC
+  // shareholders may appoint any proxy, shareholder or not; LLC
+  // quota-holders may only appoint another quota-holder. Defaults to JSC,
+  // the standard form for FRA-regulated financial entities.
+  legalForm          LegalForm  @default(JSC)
   regulator          String     @default("FRA")
   verificationStatus VerificationStatus @default(PENDING)
 
@@ -398,6 +408,9 @@ model Capacity {
   meetingAttendances    MeetingAttendance[]
   proposedAgendaItems   AgendaItem[]   @relation("ProposedAgendaItems")
   minutesVerifications  MinutesVerification[]
+  gaSecretaryForMeetings Meeting[]     @relation("MeetingGaSecretary")
+  proxiesGranted        Proxy[]        @relation("ProxyGrantor")
+  proxiesReceived       Proxy[]        @relation("ProxyGrantee")
 
   @@index([entityId, role])
   @@index([userId])
@@ -552,6 +565,13 @@ model Meeting {
   // added except via the Chairman's mid-meeting flag or a confirmed
   // 100%-unanimous addition (spec section 5) — see meetings/routes.ts.
   agendaLockedAt DateTime?
+  // GA meeting roles (spec section 6): every OGM/EGM requires a secretary
+  // and exactly two vote counters, appointed by the meeting chairman —
+  // distinct from the entity's standing Corporate Secretary capacity, which
+  // may or may not be the same person for a given meeting.
+  gaSecretaryCapacityId    String?
+  gaSecretaryCapacity      Capacity? @relation("MeetingGaSecretary", fields: [gaSecretaryCapacityId], references: [id])
+  gaVoteCounterCapacityIds String[]  @default([])
   // OGM/EGM second meeting after a failed-quorum first meeting (spec
   // section 6: valid regardless of attendance for OGM; >=25% capital for
   // EGM) — same notice, no new invitation required.
@@ -639,7 +659,9 @@ model Proxy {
   meetingId             String
   meeting               Meeting  @relation(fields: [meetingId], references: [id])
   grantorCapacityId     String
+  grantorCapacity       Capacity @relation("ProxyGrantor", fields: [grantorCapacityId], references: [id])
   granteeCapacityId     String
+  granteeCapacity       Capacity @relation("ProxyGrantee", fields: [granteeCapacityId], references: [id])
   scope                 String   @default("FULL")
   expiresAt             DateTime?
   createdAt             DateTime @default(now())
