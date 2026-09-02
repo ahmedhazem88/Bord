@@ -37,10 +37,18 @@ export interface PrivilegeGrant {
 /** Flattened from the section-12 matrix. Roles not listed for an action have no grant. */
 export const PRIVILEGE_MATRIX: PrivilegeGrant[] = [
   { action: "meeting:schedule", role: "CHAIRMAN", scope: "full" },
+  // Vice Chairman convening in the Chairman's stead is a common bylaw
+  // provision, not itself in spec section 12's matrix (which only lists
+  // Chairman/MD/Secretary) — added on explicit product direction. The
+  // statutory convocation-rights path (1/3 of the board requests, Chairman
+  // has 10 days, then those members convene themselves) is the separate
+  // MeetingRequest workflow, not this direct-schedule grant.
+  { action: "meeting:schedule", role: "VICE_CHAIRMAN", scope: "full" },
   { action: "meeting:schedule", role: "MANAGING_DIRECTOR", scope: "full" },
   { action: "meeting:schedule", role: "CORPORATE_SECRETARY", scope: "full" },
 
   { action: "agenda:set", role: "CHAIRMAN", scope: "full" },
+  { action: "agenda:set", role: "VICE_CHAIRMAN", scope: "full" },
   { action: "agenda:set", role: "MANAGING_DIRECTOR", scope: "full" },
   { action: "agenda:set", role: "CORPORATE_SECRETARY", scope: "full" },
   { action: "agenda:propose", role: "NON_EXECUTIVE_BOARD_MEMBER", scope: "propose_only" },
@@ -88,6 +96,7 @@ export const PRIVILEGE_MATRIX: PrivilegeGrant[] = [
   { action: "verification:upload_entity_level", role: "CORPORATE_SECRETARY", scope: "entity" },
 
   { action: "meeting:request_board", role: "CHAIRMAN", scope: "full" },
+  { action: "meeting:request_board", role: "VICE_CHAIRMAN", scope: "full" },
   { action: "meeting:request_board", role: "MANAGING_DIRECTOR", scope: "full" },
   { action: "meeting:request_board", role: "NON_EXECUTIVE_BOARD_MEMBER", scope: "full" },
   { action: "meeting:request_board", role: "EXECUTIVE_BOARD_MEMBER", scope: "full" },
@@ -95,6 +104,7 @@ export const PRIVILEGE_MATRIX: PrivilegeGrant[] = [
   { action: "meeting:request_ga", role: "GA_MEMBER", scope: "full" },
 
   { action: "interest:declare_update", role: "CHAIRMAN", scope: "full" },
+  { action: "interest:declare_update", role: "VICE_CHAIRMAN", scope: "full" },
   { action: "interest:declare_update", role: "MANAGING_DIRECTOR", scope: "full" },
   { action: "interest:declare_update", role: "CORPORATE_SECRETARY", scope: "full" },
   { action: "interest:declare_update", role: "NON_EXECUTIVE_BOARD_MEMBER", scope: "full" },
@@ -106,6 +116,7 @@ export const PRIVILEGE_MATRIX: PrivilegeGrant[] = [
   { action: "proxy:grant_revoke", role: "GA_MEMBER", scope: "full" },
 
   { action: "vote:abstain_recused", role: "CHAIRMAN", scope: "full" },
+  { action: "vote:abstain_recused", role: "VICE_CHAIRMAN", scope: "full" },
   { action: "vote:abstain_recused", role: "MANAGING_DIRECTOR", scope: "full" },
   { action: "vote:abstain_recused", role: "NON_EXECUTIVE_BOARD_MEMBER", scope: "full" },
   { action: "vote:abstain_recused", role: "EXECUTIVE_BOARD_MEMBER", scope: "full" },
@@ -114,6 +125,7 @@ export const PRIVILEGE_MATRIX: PrivilegeGrant[] = [
 
   { action: "remuneration:set_board_via_ga", role: "GA_MEMBER", scope: "full" },
   { action: "remuneration:set_executive_via_board", role: "CHAIRMAN", scope: "full" },
+  { action: "remuneration:set_executive_via_board", role: "VICE_CHAIRMAN", scope: "full" },
   { action: "remuneration:set_executive_via_board", role: "NON_EXECUTIVE_BOARD_MEMBER", scope: "full" },
   { action: "remuneration:set_executive_via_board", role: "EXECUTIVE_BOARD_MEMBER", scope: "full" },
   { action: "remuneration:set_executive_via_board", role: "INDEPENDENT_BOARD_MEMBER", scope: "full" },

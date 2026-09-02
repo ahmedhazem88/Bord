@@ -92,6 +92,16 @@ enum MeetingStatus {
   CANCELLED
 }
 
+enum MinutesStatus {
+  DRAFT
+  CIRCULATED
+  CHAIRMAN_SIGNED
+  SECRETARY_SIGNED
+  FINAL
+  SUBMITTED_FRA
+  SUBMITTED_GAFI
+}
+
 enum AttendanceMode {
   IN_PERSON
   VIRTUAL
@@ -249,6 +259,7 @@ model Entity {
   remunerationPolicies RemunerationPolicy[]
   meetingRequests      MeetingRequest[]
   auditLogEntries      AuditLog[]
+  minutes              Minutes[]
 
   @@index([registrationNumber])
 }
@@ -266,6 +277,11 @@ model Capacity {
   endDate              DateTime?
   appointingResolutionId String?
   appointingResolution Resolution?    @relation("AppointingResolution", fields: [appointingResolutionId], references: [id])
+
+  // GA capital weight — "one share, one vote" (spec section 6). Only
+  // meaningful for GA_MEMBER capacities; drives both GA quorum-by-capital
+  // and vote weight. Null for non-GA roles (board votes are one-member-one-vote).
+  sharePercentage      Decimal?       @db.Decimal(6, 3)
 
   // Verification (Epic 2)
   verificationStatus   VerificationStatus @default(PENDING)
@@ -287,6 +303,7 @@ model Capacity {
   remunerationRecords   RemunerationRecord[]
   documents             Document[]     @relation("CapacityDocuments")
   boardChairOf          Board[]        @relation("BoardChair")
+  meetingAttendances    MeetingAttendance[]
 
   @@index([entityId, role])
   @@index([userId])
@@ -391,6 +408,10 @@ model Resolution {
   rollbackReason         String?
   // Snapshot of the structural state before this resolution applied, for rollback (PRD 5.4 / Epic 4 AC).
   preResolutionSnapshot  Json?
+  // Decided at creation time (what this resolution DOES if it passes) so
+  // the voting engine's close-and-tally step can apply it automatically
+  // once the required majority is reached — see resolutions/voting.ts.
+  proposedEffect         Json?
   createdAt              DateTime          @default(now())
   updatedAt              DateTime          @updatedAt
 
@@ -419,12 +440,21 @@ model Meeting {
   status        MeetingStatus @default(SCHEDULED)
   quorumRequiredPct Float?
   quorumMet     Boolean?
+  closedAt      DateTime?
+  // OGM/EGM second meeting after a failed-quorum first meeting (spec
+  // section 6: valid regardless of attendance for OGM; >=25% capital for
+  // EGM) — same notice, no new invitation required.
+  isSecondMeeting Boolean     @default(false)
+  firstMeetingId  String?
+  firstMeeting    Meeting?    @relation("SecondMeetingOf", fields: [firstMeetingId], references: [id])
+  secondMeetings  Meeting[]   @relation("SecondMeetingOf")
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
   agendaItems     AgendaItem[]
   attendances     MeetingAttendance[]
   proxies         Proxy[]
+  minutes         Minutes?
 
   @@index([entityId, type, scheduledAt])
 }
@@ -452,6 +482,7 @@ model MeetingAttendance {
   meetingId      String
   meeting        Meeting        @relation(fields: [meetingId], references: [id])
   capacityId     String
+  capacity       Capacity       @relation(fields: [capacityId], references: [id])
   mode           AttendanceMode
   rsvpAt         DateTime?
   checkedInAt    DateTime?
@@ -492,6 +523,32 @@ model Vote {
   @@index([resolutionId])
 }
 
+// Board/GA minutes — auto-generated from agenda, attendance, and vote
+// records, circulated, dual-signed (chairman + secretary), then submitted
+// to the FRA (10 days) and, for OGM/EGM, GAFI (1 month). Directory search
+// (by date range, keyword, discussion point) reads this table directly.
+model Minutes {
+  id                 String        @id @default(cuid())
+  meetingId          String        @unique
+  meeting            Meeting       @relation(fields: [meetingId], references: [id])
+  entityId           String
+  entity             Entity        @relation(fields: [entityId], references: [id])
+  content            String // full narrative text, generated then editable up to signature
+  discussionPoints   Json // [{ agendaItemId, title, notes }] — per-item discussion, searchable
+  keywords           String[]
+  status             MinutesStatus @default(DRAFT)
+  chairmanSignedAt   DateTime?
+  chairmanSignedByUserId String?
+  secretarySignedAt  DateTime?
+  secretarySignedByUserId String?
+  submittedToFraAt   DateTime?
+  submittedToGafiAt  DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([entityId, createdAt])
+}
+
 model MeetingRequest {
   id                String                @id @default(cuid())
   entityId          String
@@ -502,6 +559,8 @@ model MeetingRequest {
   thresholdMet      Boolean               @default(false)
   status            MeetingRequestStatus  @default(PENDING)
   responseDeadline  DateTime
+  chairmanRespondedAt DateTime?
+  resultingMeetingId String?
   createdAt         DateTime              @default(now())
 
   @@index([entityId, status])

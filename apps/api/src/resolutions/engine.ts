@@ -38,6 +38,11 @@ export interface CreateResolutionInput {
   type: ResolutionType;
   title: string;
   description: string;
+  // Decided up front: what this resolution does if it passes. Stored so the
+  // voting engine's close-and-tally step can apply it without the caller
+  // re-supplying it (and re-risking a mismatch between what was voted on
+  // and what gets applied).
+  proposedEffect?: ResolutionEffectPayload;
   requiredMajority: string;
   actorUserId: string;
 }
@@ -176,6 +181,7 @@ export async function createResolution(tx: Prisma.TransactionClient, input: Crea
       requiredMajority: input.requiredMajority,
       effectBasis,
       status: "DRAFT",
+      proposedEffect: (input.proposedEffect ?? undefined) as Prisma.InputJsonValue | undefined,
     },
   });
   await appendAuditLog(tx, {
@@ -290,6 +296,36 @@ export async function rejectOrLapseResolution(
     recordId: resolutionId,
     beforeData: { status: "PENDING_AUTHORIZATION" },
     afterData: { status: outcome, reason },
+  });
+
+  return updated;
+}
+
+/**
+ * The vote was tallied and did not reach its required majority — a
+ * different rejection point than rejectOrLapseResolution's (that one is
+ * for a PENDING_AUTHORIZATION resolution GAFI later declines; this one is
+ * for a resolution that never passed its own meeting in the first place).
+ * Still DRAFT, so no structural effect was ever applied — nothing to roll back.
+ */
+export async function failResolutionVote(tx: Prisma.TransactionClient, resolutionId: string, actorUserId: string, tallySummary: unknown) {
+  const resolution = await tx.resolution.findUniqueOrThrow({ where: { id: resolutionId } });
+  if (resolution.status !== "DRAFT") {
+    throw new Error(`resolution ${resolutionId} is not DRAFT (currently ${resolution.status})`);
+  }
+
+  const updated = await tx.resolution.update({
+    where: { id: resolutionId },
+    data: { status: "REJECTED", rollbackReason: "Did not reach the required majority at the meeting." },
+  });
+
+  await appendAuditLog(tx, {
+    entityId: resolution.entityId,
+    actorUserId,
+    action: "RESOLUTION_VOTE_FAILED",
+    tableName: "Resolution",
+    recordId: resolutionId,
+    afterData: { status: "REJECTED", tally: tallySummary },
   });
 
   return updated;

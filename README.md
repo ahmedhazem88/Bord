@@ -11,13 +11,24 @@ This is the Phase 1 architectural foundation, built in build-sequence order (PRD
 
 - **Done**: data model + Resolution Engine + hash-chained AuditLog; tenant-isolated auth with
   role-appropriate MFA; Identity/Capacity (Epic 1) and Registration/Verification (Epic 2); the
-  Governance Structure Builder with composition-rule enforcement (Epic 3); a working React
-  frontend for the flows above.
-- **Scaffolded, not complete**: Meeting & Conferencing (Epic 5 — no live quorum/vote-tally engine
-  yet), Regulatory Calendar & Change Monitoring (Epics 6–7 — no reminder/scan jobs yet),
+  Governance Structure Builder with composition-rule enforcement (Epic 3); Meeting & Conferencing
+  (Epic 5) — Board/Committee/OGM/EGM scheduling including OGM/EGM second meetings, the
+  convocation-rights MeetingRequest workflow (1/3 board + 10-day Chairman window; 5%/10% GA
+  capital + 1-month board window), a context-based live quorum calculator (board headcount vs. GA
+  capital-percentage, blocking votes the instant quorum is lost mid-meeting), the four-value
+  voting engine with the Art. 74 hard exclusion and capital-weighted tallying, and board/GA
+  minutes — auto-generated, dual-signed, FRA/GAFI submission tracking, and a searchable directory
+  (date range, keyword, free text); a compliance-assistant search endpoint across
+  obligations/rules/minutes/resolutions plus a computed 30/14/3-day escalating-alerts endpoint
+  (Epics 6–7); a working React frontend for the earlier (Epic 1–3) flows.
+- **Scaffolded, not complete**: Regulatory Change Monitoring's scheduled scan (Epic 7 — no job
+  scheduler exists, so alerts are pull/computed, not pushed — see `src/compliance/routes.ts`),
   Remuneration & Payouts (Epic 8 — no cap auto-calculation from financials), Document Management &
-  E-Signature (Epic 10 — no object-storage or CSP integration). Each module's source file says
-  explicitly what's built vs. deferred.
+  E-Signature (Epic 10 — no object-storage or CSP integration). No frontend screens yet for the
+  new Epic 5/6/7 endpoints (voting, minutes directory, compliance search) — API-only so far.
+  Off-agenda-item blocking + 100%-unanimous-addition override and virtual-attendance
+  recording-retention enforcement are also not built. Each module's source file says explicitly
+  what's built vs. deferred.
 - **Not started**: e-signature CSP integration, encrypted object storage, PDPL compliance
   paperwork (DPO registration, processing license, DPIA — these are organizational/legal steps,
   not code).

@@ -3,6 +3,8 @@ import { z } from "zod";
 import { withTenantContext } from "../db.js";
 import { requireCapability, requireEntityAccess, requireRole } from "../auth/rbac.js";
 import { createResolution, passResolution, ratifyResolution, rejectOrLapseResolution, type ResolutionEffectPayload } from "./engine.js";
+import { castVote, closeVotingAndTally, getResolutionTally, VotingError } from "./voting.js";
+import { MAJORITY_RULES } from "./majority.js";
 
 const createSchema = z.object({
   agendaItemId: z.string(),
@@ -19,7 +21,11 @@ const createSchema = z.object({
   ]),
   title: z.string().min(1),
   description: z.string().min(1),
-  requiredMajority: z.string().min(1),
+  requiredMajority: z.enum(MAJORITY_RULES as [string, ...string[]]),
+  // What this resolution does if it passes — applied automatically when
+  // voting closes and the majority is met (see close-voting below). Omit
+  // for a resolution with no structural effect (e.g. a procedural note).
+  proposedEffect: z.custom<ResolutionEffectPayload>().optional(),
 });
 
 const passSchema = z.object({
@@ -29,6 +35,11 @@ const passSchema = z.object({
 const rejectSchema = z.object({
   outcome: z.enum(["REJECTED", "LAPSED"]),
   reason: z.string().min(1),
+});
+
+const castVoteSchema = z.object({
+  value: z.enum(["FOR", "AGAINST", "ABSTAIN", "RECUSED"]),
+  recusalReason: z.string().optional(),
 });
 
 export async function registerResolutionRoutes(app: FastifyInstance): Promise<void> {
@@ -94,4 +105,59 @@ export async function registerResolutionRoutes(app: FastifyInstance): Promise<vo
     );
     return reply.send(resolutions);
   });
+
+  // Cast (or change) a vote — For/Against/Abstain/Recused. Eligibility (board
+  // vs GA vs committee capacity), quorum, and the Art. 74 hard exclusion are
+  // all enforced inside castVote, not here.
+  app.post(
+    "/entities/:entityId/resolutions/:resolutionId/votes",
+    { preHandler: [app.authenticate, requireEntityAccess()] },
+    async (request, reply) => {
+      const { entityId, resolutionId } = request.params as { entityId: string; resolutionId: string };
+      const body = castVoteSchema.parse(request.body);
+      try {
+        const vote = await withTenantContext(entityId, (tx) => castVote(tx, { resolutionId, voterUserId: request.user.sub, ...body }));
+        return reply.code(201).send(vote);
+      } catch (error) {
+        if (error instanceof VotingError) return reply.code(error.statusCode).send({ error: error.message });
+        throw error;
+      }
+    },
+  );
+
+  // Live tally — For/Against/Abstain/Recused weights, whether it would pass
+  // right now, and current quorum. Lets the UI show vote status mid-meeting.
+  app.get(
+    "/entities/:entityId/resolutions/:resolutionId/tally",
+    { preHandler: [app.authenticate, requireEntityAccess()] },
+    async (request, reply) => {
+      const { entityId, resolutionId } = request.params as { entityId: string; resolutionId: string };
+      try {
+        const result = await withTenantContext(entityId, (tx) => getResolutionTally(tx, resolutionId));
+        return reply.send(result);
+      } catch (error) {
+        if (error instanceof VotingError) return reply.code(error.statusCode).send({ error: error.message });
+        throw error;
+      }
+    },
+  );
+
+  // Closes voting: tallies, checks the required majority, and either
+  // applies the resolution's proposedEffect (via the same Resolution
+  // Engine every other path uses) or marks it REJECTED. Gated the same as
+  // agenda control (Chairman/Vice Chairman/MD/Secretary run the meeting).
+  app.post(
+    "/entities/:entityId/resolutions/:resolutionId/close-voting",
+    { preHandler: [app.authenticate, requireCapability("agenda:set")] },
+    async (request, reply) => {
+      const { entityId, resolutionId } = request.params as { entityId: string; resolutionId: string };
+      try {
+        const result = await withTenantContext(entityId, (tx) => closeVotingAndTally(tx, resolutionId, request.user.sub));
+        return reply.send(result);
+      } catch (error) {
+        if (error instanceof VotingError) return reply.code(error.statusCode).send({ error: error.message });
+        throw error;
+      }
+    },
+  );
 }
