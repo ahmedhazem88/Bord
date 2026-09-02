@@ -19,7 +19,14 @@ const loginSchema = z.object({
   mfaToken: z.string().optional(),
 });
 
-async function userStrongMfaRequired(userId: string): Promise<boolean> {
+// Spec section 9.2: MFA is mandatory for every user — STRONG_MFA_ROLES only
+// marks which roles additionally require a *stronger* factor (hardware key,
+// never SMS) once more than one factor type exists. Today TOTP (an
+// authenticator app, never SMS) is the only factor implemented, so it
+// already satisfies the "never SMS" half of that requirement for everyone;
+// what it does NOT yet do is differentiate a hardware-key-only path for the
+// three strong-MFA roles — that's real follow-up work, not this fix.
+async function userIsStrongMfaRole(userId: string): Promise<boolean> {
   const [platformAdmin, strongCapacity] = await Promise.all([
     prisma.platformAdmin.findUnique({ where: { userId } }),
     prisma.capacity.findFirst({
@@ -69,14 +76,17 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     const passwordOk = await verifyPassword(user.passwordHash, body.password);
     if (!passwordOk) return invalid();
 
-    const mfaRequired = await userStrongMfaRequired(user.id);
-
-    if (mfaRequired && !user.mfaEnabled) {
+    // Mandatory for every user (spec 9.2) — not just the strong-MFA roles.
+    if (!user.mfaEnabled) {
       const setupToken = app.jwt.sign({ sub: user.id, isPlatformAdmin: false, scope: "mfa_setup" }, { expiresIn: "10m" });
+      const strongFactorRequired = await userIsStrongMfaRole(user.id);
       return reply.code(403).send({
         error: "mfa_enrollment_required",
-        message: "This role requires multi-factor authentication before login can complete.",
+        message: strongFactorRequired
+          ? "This role requires a stronger multi-factor authentication before login can complete."
+          : "Multi-factor authentication is required for every account before login can complete.",
         setupToken,
+        strongFactorRequired,
       });
     }
 

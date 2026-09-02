@@ -61,13 +61,29 @@ export async function registerResolutionRoutes(app: FastifyInstance): Promise<vo
     },
   );
 
+  // Bootstrap-only escape hatch: passResolution has no vote/quorum check of
+  // its own (closeVotingAndTally is what enforces the majority before ever
+  // calling it), so this route must refuse any resolution that IS tied to a
+  // convened meeting — otherwise it force-passes a meeting-bound resolution
+  // with zero votes cast, bypassing the required majority entirely. A
+  // resolution with no agendaItemId (onboarding's INITIAL_STRUCTURE, or a
+  // chain stage still awaiting its meeting) has no vote to bypass.
   app.post(
     "/entities/:entityId/resolutions/:resolutionId/pass",
     { preHandler: [app.authenticate, requireCapability("vote:board_resolution")] },
     async (request, reply) => {
       const { entityId, resolutionId } = request.params as { entityId: string; resolutionId: string };
       const { effectPayload } = passSchema.parse(request.body);
-      const updated = await withTenantContext(entityId, (tx) => passResolution(tx, resolutionId, request.user.sub, effectPayload));
+      const updated = await withTenantContext(entityId, async (tx) => {
+        const resolution = await tx.resolution.findUniqueOrThrow({ where: { id: resolutionId } });
+        if (resolution.agendaItemId) {
+          throw Object.assign(
+            new Error("this resolution is tied to a convened meeting — pass it via close-voting after a majority is cast, not this bootstrap-only endpoint"),
+            { statusCode: 409 },
+          );
+        }
+        return passResolution(tx, resolutionId, request.user.sub, effectPayload);
+      });
       return reply.send(updated);
     },
   );

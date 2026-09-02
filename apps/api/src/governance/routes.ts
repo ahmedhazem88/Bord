@@ -13,7 +13,7 @@ async function currentBoardMembers(tx: Prisma.TransactionClient, entityId: strin
     where: { entityId, active: true, startDate: { lte: now }, OR: [{ endDate: null }, { endDate: { gt: now } }] },
     include: { user: { select: { gender: true } } },
   });
-  return capacities.map((c) => ({ capacityId: c.id, role: c.role, gender: c.user.gender }));
+  return capacities.map((c) => ({ capacityId: c.id, userId: c.userId, role: c.role, gender: c.user.gender }));
 }
 
 export async function registerGovernanceRoutes(app: FastifyInstance): Promise<void> {

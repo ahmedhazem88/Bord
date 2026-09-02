@@ -2,6 +2,7 @@ import { BOARD_ROLES, EXECUTIVE_ROLES, INDEPENDENT_ROLES, NON_EXECUTIVE_ROLES, t
 
 export interface BoardMemberSnapshot {
   capacityId: string;
+  userId: string;
   role: GovernanceRole;
   gender: "MALE" | "FEMALE" | null;
 }
@@ -46,7 +47,10 @@ export function validateBoardComposition(members: BoardMemberSnapshot[], options
     );
   }
 
-  if (chairman && md && chairman.capacityId === md.capacityId && !options.chairMdSeparationExceptionApproved) {
+  // Compared by userId, not capacityId — Chairman and MD are always distinct
+  // Capacity rows (one per role) even when the same person holds both, so a
+  // capacityId comparison could never catch this.
+  if (chairman && md && chairman.userId === md.userId && !options.chairMdSeparationExceptionApproved) {
     violations.push("Chairman and Managing Director must be different people, unless the entity has an FRA-disclosed exception on file.");
   }
 

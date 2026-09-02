@@ -150,7 +150,7 @@ export function LoginPage() {
         {step === "mfa_enroll" && (
           <div>
             <p className="subtle">
-              Your role requires multi-factor authentication (spec section 9.2). Set up an authenticator app to continue.
+              Multi-factor authentication is required for every account (spec section 9.2). Set up an authenticator app to continue.
             </p>
             {error && <p className="error-text">{error}</p>}
             <button className="btn" onClick={startEnroll} disabled={busy}>
