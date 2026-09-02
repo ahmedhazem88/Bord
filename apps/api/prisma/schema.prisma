@@ -364,6 +364,7 @@ model Entity {
   minutes              Minutes[]
   governingDocuments   GoverningDocument[]
   boardElections       BoardElection[]
+  financialStatements  FinancialStatement[]
 
   @@index([registrationNumber])
 }
@@ -542,6 +543,7 @@ model Resolution {
   committeeAppointments  CommitteeMembership[] @relation("CommitteeAppointingResolution")
   foundedCommittees      Committee[]           @relation("CommitteeFoundingResolution")
   remunerationRecords    RemunerationRecord[]
+  financialStatement     FinancialStatement?
 
   @@index([entityId, status])
 }
@@ -879,6 +881,26 @@ model RemunerationRecord {
   payouts Payout[]
 
   @@index([capacityId])
+}
+
+// The net-distributable-profit figure a FINANCIAL_STATEMENTS_APPROVAL
+// resolution establishes for a fiscal year — the base the 10% board
+// remuneration cap (RegulatoryRule
+// BOARD_REMUNERATION_CAP_PCT_OF_NET_DISTRIBUTABLE_PROFIT) is computed
+// against. One per entity per fiscal year; a later approval for the same
+// year supersedes the figure (e.g. restated accounts).
+model FinancialStatement {
+  id                     String   @id @default(cuid())
+  entityId               String
+  entity                 Entity   @relation(fields: [entityId], references: [id])
+  fiscalYear             Int
+  netDistributableProfit Decimal  @db.Decimal(18, 2)
+  approvingResolutionId  String   @unique
+  approvingResolution    Resolution @relation(fields: [approvingResolutionId], references: [id])
+  createdAt              DateTime @default(now())
+
+  @@unique([entityId, fiscalYear])
+  @@index([entityId])
 }
 
 model Payout {

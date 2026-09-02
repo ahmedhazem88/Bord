@@ -38,6 +38,18 @@ export type ResolutionEffectPayload =
       // linked resolution"). Omit for a resolution with no structural effect.
       committee?: { name: string; committeeType: CommitteeType; charterMandate: string; quorumRule: string; minIndependentCount: number };
     }
+  | {
+      // Establishes/updates the entity's net-distributable-profit figure for
+      // a fiscal year — the base the 10% board remuneration cap (spec
+      // section 9, RegulatoryRule
+      // BOARD_REMUNERATION_CAP_PCT_OF_NET_DISTRIBUTABLE_PROFIT) is computed
+      // against. Recorded only once this reaches the terminal stage of its
+      // approval chain (Audit Committee, then Board) — see passResolution.
+      type: "FINANCIAL_STATEMENTS_APPROVAL";
+      description: string;
+      fiscalYear: number;
+      netDistributableProfit: number;
+    }
   | { type: "AOA_AMENDMENT" | "CAPITAL_CHANGE" | "DISSOLUTION" | "MERGER" | "MERGER_INCREASING_LIABILITY" | "PURPOSE_CHANGE"; description: string }
   | {
       // Onboarding bootstrap only — establishes a company's current
@@ -61,7 +73,7 @@ export type ResolutionEffectPayload =
   | {
       // Approval-only — no structural table changes, just marks the record
       // approved at whichever stage this is. See resolveApprovalChain.
-      type: "BUDGET_APPROVAL" | "FINANCIAL_STATEMENTS_APPROVAL";
+      type: "BUDGET_APPROVAL";
       description: string;
     };
 
@@ -116,6 +128,62 @@ async function resolveApprovalChain(tx: Prisma.TransactionClient, entityId: stri
   return ["BOARD"];
 }
 
+/** Exported for the remuneration cap-reconciliation view (remuneration/routes.ts) — same rule resolution used to enforce the cap here. */
+export async function resolveBoardRemunerationCapPct(tx: Prisma.TransactionClient, entityId: string): Promise<number> {
+  const ruleKey = "BOARD_REMUNERATION_CAP_PCT_OF_NET_DISTRIBUTABLE_PROFIT";
+  const override = await tx.regulatoryRuleOverride.findFirst({ where: { entityId, rule: { ruleKey }, status: "CUSTOM_OVERRIDE" } });
+  if (override) return Number(override.value);
+
+  const rule = await tx.regulatoryRule.findUnique({ where: { ruleKey } });
+  if (rule) return Number(rule.currentValue);
+
+  throw new Error(`no ${ruleKey} regulatory rule on file — cannot compute the board remuneration cap`);
+}
+
+/**
+ * Spec section 9: aggregate board remuneration for a fiscal year may not
+ * exceed a percentage (default 10%, AoA-overridable via the same
+ * RegulatoryRuleOverride mechanism as every other bylaw-configurable rule)
+ * of that year's approved net distributable profit. Only board-type
+ * remuneration policies are capped this way — MD/executive remuneration is
+ * a different pool with no such statutory ceiling in the spec.
+ */
+async function assertWithinBoardRemunerationCap(
+  tx: Prisma.TransactionClient,
+  entityId: string,
+  policyId: string,
+  amount: number,
+  effectiveDate: Date,
+): Promise<void> {
+  const policy = await tx.remunerationPolicy.findUniqueOrThrow({ where: { id: policyId } });
+  if (policy.type !== "BOARD") return;
+
+  const fiscalYear = effectiveDate.getUTCFullYear();
+  const statement = await tx.financialStatement.findUnique({ where: { entityId_fiscalYear: { entityId, fiscalYear } } });
+  if (!statement) {
+    throw new Error(
+      `cannot approve board remuneration effective in FY${fiscalYear}: no approved financial statement is on file for that year — the board remuneration cap can't be computed until FINANCIAL_STATEMENTS_APPROVAL has passed for FY${fiscalYear}`,
+    );
+  }
+
+  const capPct = await resolveBoardRemunerationCapPct(tx, entityId);
+  const cap = Number(statement.netDistributableProfit) * (capPct / 100);
+
+  const yearStart = new Date(Date.UTC(fiscalYear, 0, 1));
+  const yearEnd = new Date(Date.UTC(fiscalYear + 1, 0, 1));
+  const existing = await tx.remunerationRecord.findMany({
+    where: { policy: { entityId, type: "BOARD" }, effectiveDate: { gte: yearStart, lt: yearEnd } },
+    select: { amount: true },
+  });
+  const alreadyCommitted = existing.reduce((sum, r) => sum + Number(r.amount), 0);
+
+  if (alreadyCommitted + amount > cap) {
+    throw new Error(
+      `board remuneration of ${amount} for FY${fiscalYear} would exceed the ${capPct}% net-distributable-profit cap (cap ${cap.toFixed(2)}, already committed ${alreadyCommitted.toFixed(2)}, net distributable profit ${statement.netDistributableProfit})`,
+    );
+  }
+}
+
 /** Applies a resolution's structural effect and returns a snapshot describing how to revert it. */
 async function applyEffect(
   tx: Prisma.TransactionClient,
@@ -164,6 +232,8 @@ async function applyEffect(
     case "MD_REMUNERATION":
     case "EXECUTIVE_REMUNERATION":
     case "GA_SET_BOARD_REMUNERATION": {
+      const effectiveDate = payload.effectiveDate ?? resolutionDate;
+      await assertWithinBoardRemunerationCap(tx, entityId, payload.policyId, payload.amount, effectiveDate);
       const record = await tx.remunerationRecord.create({
         data: {
           capacityId: payload.capacityId,
@@ -171,7 +241,7 @@ async function applyEffect(
           component: payload.component,
           amount: payload.amount,
           approvingResolutionId: resolutionId,
-          effectiveDate: payload.effectiveDate ?? resolutionDate,
+          effectiveDate,
         },
       });
       return { kind: "REMUNERATION_RECORD", remunerationRecordId: record.id };
@@ -187,10 +257,15 @@ async function applyEffect(
       // record mutation is a follow-up once that data model is built.
       return { kind: "NOT_YET_STRUCTURAL", note: payload.description };
     case "BUDGET_APPROVAL":
-    case "FINANCIAL_STATEMENTS_APPROVAL":
       // No Capacity/Committee effect — approval itself is the record. The
       // interesting behavior (advancing to the next chain stage instead of
       // finalizing) lives in passResolution, not here.
+      return { kind: "NONE" };
+    case "FINANCIAL_STATEMENTS_APPROVAL":
+      // Recording the FinancialStatement row happens in passResolution,
+      // gated on this being the terminal chain stage — not here, since
+      // applyEffect runs at every intermediate stage too (Audit Committee,
+      // then Board) and only the terminal pass is the actual approval.
       return { kind: "NONE" };
     case "INITIAL_STRUCTURE": {
       const capacityIdByUserId = new Map<string, string>();
@@ -400,7 +475,33 @@ export async function passResolution(
   // next stage now so it's ready for the Secretary to put on the next
   // body's agenda, rather than treating this pass as final.
   const chain = await resolveApprovalChain(tx, resolution.entityId, resolution.type);
-  if (resolution.chainStage < chain.length) {
+  const isTerminalStage = resolution.chainStage >= chain.length;
+
+  // Only the terminal stage's pass is the actual approval (e.g. Board,
+  // after Audit Committee) — recording the figure at an intermediate stage
+  // would let a not-yet-Board-approved number drive the remuneration cap.
+  if (isTerminalStage && effectPayload.type === "FINANCIAL_STATEMENTS_APPROVAL") {
+    const statement = await tx.financialStatement.upsert({
+      where: { entityId_fiscalYear: { entityId: resolution.entityId, fiscalYear: effectPayload.fiscalYear } },
+      create: {
+        entityId: resolution.entityId,
+        fiscalYear: effectPayload.fiscalYear,
+        netDistributableProfit: effectPayload.netDistributableProfit,
+        approvingResolutionId: resolutionId,
+      },
+      update: { netDistributableProfit: effectPayload.netDistributableProfit, approvingResolutionId: resolutionId },
+    });
+    await appendAuditLog(tx, {
+      entityId: resolution.entityId,
+      actorUserId,
+      action: "FINANCIAL_STATEMENT_RECORDED",
+      tableName: "FinancialStatement",
+      recordId: statement.id,
+      afterData: { fiscalYear: effectPayload.fiscalYear, netDistributableProfit: effectPayload.netDistributableProfit },
+    });
+  }
+
+  if (!isTerminalStage) {
     const next = await tx.resolution.create({
       data: {
         entityId: resolution.entityId,
