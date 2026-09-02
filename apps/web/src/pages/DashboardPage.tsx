@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { useDocumentHead } from "../hooks/useDocumentHead";
 
 interface Entity {
   id: string;
@@ -27,6 +28,13 @@ export function DashboardPage() {
   const [registrationNumber, setRegistrationNumber] = useState("");
   const [entityType, setEntityType] = useState(ENTITY_TYPES[0]);
   const [error, setError] = useState<string | null>(null);
+
+  useDocumentHead({
+    title: "Dashboard",
+    description: "Your entities, capacities, and governance workspace on Bord.",
+    path: "/dashboard",
+    noindex: true,
+  });
 
   async function refresh() {
     if (decoded?.isPlatformAdmin) {

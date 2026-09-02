@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
+import { useDocumentHead } from "../hooks/useDocumentHead";
 
 export function RegisterPage() {
   const navigate = useNavigate();
@@ -9,6 +10,13 @@ export function RegisterPage() {
   const [fullName, setFullName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+
+  useDocumentHead({
+    title: "Create an account",
+    description: "Create a Bord account to join a company's board or list your governance profile.",
+    path: "/register",
+    noindex: true,
+  });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

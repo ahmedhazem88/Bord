@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withTenantContext, withPlatformAdminContext } from "../db.js";
 import { requirePlatformAdmin } from "../auth/rbac.js";
 import { appendAuditLog } from "../audit/auditLog.js";
+import { ensureUniqueSlug } from "../public/slug.js";
 
 const createEntitySchema = z.object({
   legalName: z.string().min(1),
@@ -25,7 +26,17 @@ export async function registerEntityRoutes(app: FastifyInstance): Promise<void> 
     // evaluates RETURNING against the SELECT policy too, and at insert time
     // no tenant context exists yet for the not-yet-created entity — the
     // platform-admin SELECT branch is what makes the RETURNING row visible.
-    const entity = await withPlatformAdminContext((tx) => tx.entity.create({ data: body }));
+    //
+    // publicSlug is generated up front: publiclyListed defaults to true (an
+    // FRA-regulated entity's identity is public record regardless), so
+    // there's no distinct opt-in moment for companies the way there is for
+    // users — unlike a professional's profile, this is set once at
+    // onboarding and only visibility (publiclyListed) toggles afterward via
+    // PUT /entities/:id/public-profile.
+    const entity = await withPlatformAdminContext(async (tx) => {
+      const publicSlug = await ensureUniqueSlug(tx, "entity", body.legalName);
+      return tx.entity.create({ data: { ...body, publicSlug } });
+    });
 
     await withTenantContext(entity.id, async (tx) => {
       // Synthetic founding meeting + agenda item — see Board.foundingAgendaItemId

@@ -8,10 +8,10 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <nav className="top-nav">
-        <strong>Bord</strong>
+        <Link to="/dashboard" className="top-nav-logo">Bord</Link>
         <div className="top-nav-links">
-          <Link to="/">Entities</Link>
-          <Link to="/my-capacities">My Capacities</Link>
+          <Link to="/dashboard">Dashboard</Link>
+          <Link to="/" className="subtle">Public site</Link>
           {decoded && <button className="btn-secondary btn" onClick={logout}>Sign out</button>}
         </div>
       </nav>

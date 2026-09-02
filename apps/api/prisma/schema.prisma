@@ -221,6 +221,16 @@ model User {
   mfaEnabled        Boolean   @default(false)
   mfaEnforced       Boolean   @default(false) // true for strong-MFA-required roles once they hold such a capacity
   locale            String    @default("ar")
+
+  // Public professional profile (PRD roadmap Phase 4, brought forward as a
+  // now-current product surface). Off by default — PDPL section 8.4 requires
+  // explicit, informed, freely-given consent before publishing personal data;
+  // a user opts in per profile, not per capacity, and can withdraw any time.
+  publicSlug          String?   @unique
+  publicProfileVisible Boolean  @default(false)
+  headline             String?
+  bio                   String?
+
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -245,6 +255,18 @@ model Entity {
   entityType         EntityType
   regulator          String     @default("FRA")
   verificationStatus VerificationStatus @default(PENDING)
+
+  // Public company profile. Defaults on — an FRA-regulated entity's legal
+  // name, type, and registration are public record regardless; this only
+  // controls whether Bord publishes a discoverable page for it, not the
+  // underlying governance data (board minutes, votes, remuneration —
+  // never exposed here, only what appears on the private, authenticated
+  // side of this same Entity row).
+  publicSlug     String?  @unique
+  publiclyListed Boolean  @default(true)
+  about          String?
+  website        String?
+
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 

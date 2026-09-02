@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { useDocumentHead } from "../hooks/useDocumentHead";
 
 type Step = "credentials" | "mfa_token" | "mfa_enroll" | "mfa_confirm";
 
@@ -20,6 +21,13 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  useDocumentHead({
+    title: "Sign in",
+    description: "Sign in to your Bord account to access your board and governance workspace.",
+    path: "/login",
+    noindex: true,
+  });
+
   async function submitCredentials(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -27,7 +35,7 @@ export function LoginPage() {
     try {
       const resp = await api<{ token: string }>("POST", "/auth/login", { email, password });
       login(resp.token);
-      navigate("/");
+      navigate("/dashboard");
     } catch (err) {
       if (err instanceof ApiError && err.body && typeof err.body === "object") {
         const body = err.body as { error?: string; setupToken?: string };
@@ -54,7 +62,7 @@ export function LoginPage() {
     try {
       const resp = await api<{ token: string }>("POST", "/auth/login", { email, password, mfaToken });
       login(resp.token);
-      navigate("/");
+      navigate("/dashboard");
     } catch {
       setError("invalid code");
     } finally {

@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { Callout, StatusLabel } from "../components/StatusLabel";
+import { useDocumentHead } from "../hooks/useDocumentHead";
 
 interface Capacity {
   id: string;
@@ -49,6 +50,13 @@ export function EntityGovernancePage() {
   const [seedUserId, setSeedUserId] = useState("");
   const [seedRole, setSeedRole] = useState(BOARD_ROLES[0]);
   const [seedError, setSeedError] = useState<string | null>(null);
+
+  useDocumentHead({
+    title: "Governance structure",
+    description: "Board composition, capacities, and pending resolutions for this entity.",
+    path: `/entities/${entityId}`,
+    noindex: true,
+  });
 
   async function refresh() {
     const [caps, val, pend] = await Promise.all([
