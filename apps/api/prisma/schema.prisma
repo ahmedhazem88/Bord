@@ -365,6 +365,7 @@ model Entity {
   governingDocuments   GoverningDocument[]
   boardElections       BoardElection[]
   financialStatements  FinancialStatement[]
+  regulatoryChangeAcknowledgments RegulatoryChangeAcknowledgment[]
 
   @@index([registrationNumber])
 }
@@ -966,6 +967,45 @@ model RegulatoryRuleOverride {
   createdAt  DateTime            @default(now())
 
   @@unique([entityId, ruleId])
+}
+
+// A GAFI/FRA circular or other regulatory change, recorded by a human
+// reviewer (spec section 7: "Regulatory Change Monitoring" — deliberately
+// manual/lightweight, not an automated scan; there's no scraper or feed
+// integration in this build, see regulatory/routes.ts). Platform-wide, like
+// RegulatoryRule — a change in the law applies to every entity, not one.
+model RegulatoryChangeNotice {
+  id                String   @id @default(cuid())
+  title             String
+  description       String
+  legalCitation     String
+  sourceDocument    String?
+  effectiveDate     DateTime
+  // RegulatoryRule.ruleKey values this change affects, if any — lets a
+  // Compliance Officer jump straight from the notice to the rule(s) it
+  // touches without them needing to already know which ones.
+  affectedRuleKeys  String[]
+  publishedByUserId String
+  createdAt         DateTime @default(now())
+
+  acknowledgments RegulatoryChangeAcknowledgment[]
+}
+
+// One entity's Compliance Officer (or Corporate Secretary) confirming
+// they've reviewed a notice — the actual "monitoring" record: not that the
+// platform detected the change (a human did), but that each entity has
+// demonstrably seen and dealt with it, per entity, timestamped.
+model RegulatoryChangeAcknowledgment {
+  id                 String                 @id @default(cuid())
+  noticeId           String
+  notice             RegulatoryChangeNotice @relation(fields: [noticeId], references: [id])
+  entityId           String
+  entity             Entity                 @relation(fields: [entityId], references: [id])
+  acknowledgedByUserId String
+  acknowledgedAt     DateTime               @default(now())
+
+  @@unique([noticeId, entityId])
+  @@index([entityId])
 }
 
 // ---------- Governing documents (agenda compliance review) ----------
