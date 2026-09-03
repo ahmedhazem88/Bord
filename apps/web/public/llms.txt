@@ -1,0 +1,15 @@
+# Bord
+
+> Governance platform and professional network for FRA-regulated financial entities in Egypt. Runs board and general-assembly governance — scheduling, context-based quorum, four-value voting, dual-signed minutes, and compliance alerts, to the letter of Egyptian financial-sector law — and connects those entities with a public directory of verified governance professionals.
+
+## Public pages
+
+- [Home](/): Product overview and entry points to both directories
+- [Professionals directory](/professionals): Verified directors, chairpersons, secretaries, and compliance officers, each with an individual profile page
+- [Companies directory](/companies): FRA-regulated entities (insurance, leasing, factoring, mortgage finance, microfinance, brokerage) governed on Bord, each with an individual profile page
+- [Sitemap](/sitemap.xml): Machine-readable list of every indexable URL, generated live from the current public directory
+
+## Notes
+
+- Professional and company profiles are published only with the subject's explicit, opt-in consent (Egypt's Personal Data Protection Law) and can be withdrawn at any time — treat directory contents as current, not archival.
+- Everything else on the platform — board minutes, votes, resolutions, remuneration, and verification records — is private to each entity's members and is never exposed on these public pages or in this file.

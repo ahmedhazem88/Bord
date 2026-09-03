@@ -1,0 +1,72 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { withTenantContext, withPlatformAdminContext } from "../db.js";
+import { requirePlatformAdmin } from "../auth/rbac.js";
+import { appendAuditLog } from "../audit/auditLog.js";
+import { ensureUniqueSlug } from "../public/slug.js";
+import { seedStandingObligations } from "../regulatory/obligations.js";
+
+const createEntitySchema = z.object({
+  legalName: z.string().min(1),
+  registrationNumber: z.string().min(1),
+  entityType: z.enum(["INSURANCE", "LEASING", "FACTORING", "MORTGAGE_FINANCE", "MICROFINANCE", "BROKERAGE"]),
+  // JSC vs LLC — governs proxy eligibility (spec section 6). Defaults JSC.
+  legalForm: z.enum(["JSC", "LLC"]).default("JSC"),
+});
+
+/**
+ * Entity onboarding — Platform Admin only (PRD section 2: operator-side,
+ * never holds standing access to an entity's governance data once
+ * onboarded). Creates the Entity row and its single Board shell; board
+ * composition itself is filled in afterward entirely through Capacity
+ * resolutions (spec section 3 / PRD 5.2).
+ */
+export async function registerEntityRoutes(app: FastifyInstance): Promise<void> {
+  app.post("/entities", { preHandler: [app.authenticate, requirePlatformAdmin] }, async (request, reply) => {
+    const body = createEntitySchema.parse(request.body);
+
+    // withPlatformAdminContext (not withoutTenantContext): Postgres RLS
+    // evaluates RETURNING against the SELECT policy too, and at insert time
+    // no tenant context exists yet for the not-yet-created entity — the
+    // platform-admin SELECT branch is what makes the RETURNING row visible.
+    //
+    // publicSlug is generated up front: publiclyListed defaults to true (an
+    // FRA-regulated entity's identity is public record regardless), so
+    // there's no distinct opt-in moment for companies the way there is for
+    // users — unlike a professional's profile, this is set once at
+    // onboarding and only visibility (publiclyListed) toggles afterward via
+    // PUT /entities/:id/public-profile.
+    const entity = await withPlatformAdminContext(async (tx) => {
+      const publicSlug = await ensureUniqueSlug(tx, "entity", body.legalName);
+      return tx.entity.create({ data: { ...body, publicSlug } });
+    });
+
+    await withTenantContext(entity.id, async (tx) => {
+      // Synthetic founding meeting + agenda item — see Board.foundingAgendaItemId
+      // comment in schema.prisma for why this exists.
+      const foundingMeeting = await tx.meeting.create({
+        data: { entityId: entity.id, type: "BOARD", scheduledAt: new Date(), status: "CLOSED" },
+      });
+      const foundingAgendaItem = await tx.agendaItem.create({
+        data: { meetingId: foundingMeeting.id, order: 0, title: "Initial constitution of the board", description: "Entity onboarding" },
+      });
+      await tx.board.create({ data: { entityId: entity.id, foundingAgendaItemId: foundingAgendaItem.id } });
+      await seedStandingObligations(tx, entity.id, new Date());
+      await appendAuditLog(tx, {
+        entityId: entity.id,
+        actorUserId: request.user.sub,
+        action: "ENTITY_ONBOARDED",
+        tableName: "Entity",
+        recordId: entity.id,
+        afterData: body,
+      });
+    });
+
+    return reply.code(201).send(entity);
+  });
+
+  app.get("/entities", { preHandler: [app.authenticate, requirePlatformAdmin] }, async (_request, reply) => {
+    const entities = await withPlatformAdminContext((tx) => tx.entity.findMany({ orderBy: { createdAt: "desc" } }));
+    return reply.send(entities);
+  });
+}

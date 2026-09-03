@@ -1,0 +1,1107 @@
+// Governance Platform — Phase 1 data model.
+// Maps to MVP spec section 11 + PRD section 7.
+// Structural tables (Capacity, CommitteeMembership, RemunerationPolicy) are
+// time-versioned via validFrom/validTo and always written through a Resolution
+// (PRD 5.2) — no application code path should write them directly.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum PlatformRole {
+  PLATFORM_ADMIN
+}
+
+enum GovernanceRole {
+  CHAIRMAN
+  VICE_CHAIRMAN
+  MANAGING_DIRECTOR
+  CORPORATE_SECRETARY
+  EXECUTIVE_BOARD_MEMBER
+  NON_EXECUTIVE_BOARD_MEMBER
+  INDEPENDENT_BOARD_MEMBER
+  COMMITTEE_MEMBER
+  COMMITTEE_CHAIR
+  ADVISOR
+  GA_MEMBER
+  COMPLIANCE_OFFICER
+  // External, non-voting: attends GA meetings and, per spec section 6, can
+  // trigger the board's obligation to convene an OGM on its own request
+  // (Companies Law Art. 61 para. 3) — not a board seat, not GA capital.
+  AUDITOR
+}
+
+enum EntityType {
+  INSURANCE
+  LEASING
+  FACTORING
+  MORTGAGE_FINANCE
+  MICROFINANCE
+  BROKERAGE
+}
+
+enum LegalForm {
+  JSC
+  LLC
+}
+
+enum EffectBasis {
+  RESOLUTION_EFFECTIVE
+  AUTHORIZATION_EFFECTIVE
+}
+
+enum ResolutionType {
+  COMMITTEE_ASSIGNMENT
+  MD_REMUNERATION
+  EXECUTIVE_REMUNERATION
+  PROCEDURAL
+  BOARD_APPOINTMENT
+  BOARD_REMOVAL
+  GA_SET_BOARD_REMUNERATION
+  AOA_AMENDMENT
+  CAPITAL_CHANGE
+  // Onboarding-only: establishes a company's current governance structure
+  // (board, committees, GA members) as the baseline in one bootstrap
+  // resolution, from their actual legal documents — replaces seeding
+  // capacities one at a time. See resolutions/engine.ts's INITIAL_STRUCTURE
+  // effect and governance/routes.ts's establish-initial-structure endpoint.
+  INITIAL_STRUCTURE
+  // Multi-stage approval chain types (spec: financial statements and budget
+  // approval must pass the Audit Committee before the Board) — see
+  // resolveApprovalChain in resolutions/engine.ts.
+  BUDGET_APPROVAL
+  FINANCIAL_STATEMENTS_APPROVAL
+  // EGM extraordinary items with their own majority above the ordinary
+  // two-thirds (spec section 6): capital reduction, dissolution, merger, or
+  // a change of company purpose all require three-quarters; a merger that
+  // increases shareholder liability requires unanimous consent. See
+  // majority.ts's requiredMajorityForType.
+  DISSOLUTION
+  MERGER
+  MERGER_INCREASING_LIABILITY
+  PURPOSE_CHANGE
+}
+
+enum ResolutionStatus {
+  DRAFT
+  PASSED
+  PENDING_AUTHORIZATION
+  RATIFIED
+  REJECTED
+  LAPSED
+}
+
+enum VoteValue {
+  FOR
+  AGAINST
+  ABSTAIN
+  RECUSED
+}
+
+enum MeetingType {
+  BOARD
+  COMMITTEE
+  OGM
+  EGM
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  IN_PROGRESS
+  QUORATE
+  QUORUM_LOST
+  CLOSED
+  CANCELLED
+}
+
+enum MinutesStatus {
+  DRAFT
+  CIRCULATED
+  CHAIRMAN_SIGNED
+  SECRETARY_SIGNED
+  FINAL
+  SUBMITTED_FRA
+  SUBMITTED_GAFI
+}
+
+enum AttendanceMode {
+  IN_PERSON
+  VIRTUAL
+  PROXY
+  ABSENT
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CommitteeType {
+  AUDIT
+  RISK
+  REMUNERATION_AND_NOMINATION
+  GOVERNANCE
+  CUSTOM
+}
+
+enum MeetingRequestType {
+  BOARD
+  OGM
+  EGM
+}
+
+enum MeetingRequestStatus {
+  PENDING
+  BOARD_CALLED
+  ESCALATED_TO_GAFI
+  ESCALATED_TO_REGULATOR
+}
+
+// PROPOSED: submitted via agenda:propose (a board/committee member) or
+// materialized from a MeetingRequest's initiator-submitted agenda — sits in
+// the Secretary's review queue. CONFIRMED: set directly by agenda:set, or a
+// proposal the Secretary/Chairman has accepted into the final agenda.
+// REJECTED: a proposal the Secretary/Chairman declined, with a reason.
+enum AgendaItemStatus {
+  PROPOSED
+  CONFIRMED
+  REJECTED
+}
+
+enum GoverningDocumentType {
+  ARTICLES_OF_ASSOCIATION
+  BYLAWS
+  SHAREHOLDERS_AGREEMENT
+  OTHER_AGREEMENT
+  COVENANT
+  WARRANT
+}
+
+enum RemunerationPolicyType {
+  BOARD
+  EXECUTIVE
+  ATTENDANCE_ALLOWANCE
+}
+
+enum ApprovingBody {
+  GA
+  BOARD
+}
+
+enum RemunerationComponent {
+  BASE
+  ALLOWANCE
+  BONUS
+  EQUITY
+}
+
+enum PayoutStatus {
+  SCHEDULED
+  PAID
+  FAILED
+  REVERSED
+}
+
+enum DocumentOwnerType {
+  USER
+  ENTITY
+}
+
+// Spec section 4's document checklist. AoA/Bylaws/Shareholders' Agreement/
+// Warrant/Covenant/other-agreement are deliberately NOT here — those live on
+// GoverningDocument instead, since their text is parsed for agenda
+// compliance-review term matching, not just stored as a KYC artifact.
+enum DocumentType {
+  // Individual verification checklist
+  NATIONAL_ID_OR_PASSPORT
+  CRIMINAL_RECORD_CERTIFICATE
+  EXPERIENCE_CERTIFICATE
+  PROFESSIONAL_LICENSE
+  MINISTERIAL_APPROVAL_LETTER
+  PRIOR_BOARD_APPROVAL_RECORD
+
+  // Corporate checklist items not covered by GoverningDocumentType
+  COMMERCIAL_REGISTRATION
+  TAX_REGISTRATION_CERTIFICATE
+  SIGNATORY_APPOINTING_RESOLUTION
+
+  // Operational documents (Epic 10)
+  MINUTES
+  RESOLUTION_RECORD
+  MEETING_RECORDING
+  OTHER
+}
+
+enum RegulatoryObligationType {
+  BOARD_MEETING_CADENCE
+  OGM_ANNUAL
+  FRA_MINUTES_SUBMISSION
+  GAFI_RATIFICATION
+  FRA_ANNUAL_DISCLOSURE
+  FRA_PRE_GA_DISCLOSURE
+  TERM_LIMIT
+  AUDITOR_ROTATION
+  INTEREST_DECLARATION_RECONFIRMATION
+}
+
+enum RegulatoryObligationStatus {
+  PENDING
+  DUE_SOON
+  OVERDUE
+  COMPLETED
+}
+
+enum RuleOverrideStatus {
+  STATUTORY_DEFAULT
+  CUSTOM_OVERRIDE
+  FLAGGED_FOR_REVIEW
+}
+
+// Collected only because the statutory board-composition quota (spec
+// section 3: 25% of members, or 2 minimum, whichever applies) is defined in
+// binary terms in the source rule; not used for any other purpose.
+enum Gender {
+  FEMALE
+  MALE
+}
+
+// ---------- Platform / Identity ----------
+
+model PlatformAdmin {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id])
+  grantedAt    DateTime @default(now())
+  // Section 9.10: no standing production DB access; break-glass only, logged separately.
+  createdAt    DateTime @default(now())
+}
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  passwordHash      String
+  fullName          String
+  nationalIdHash    String? // hashed, never stored in cleartext (PDPL sensitive data)
+  gender            Gender? // see enum comment — board-composition quota only
+  mfaSecret         String? // TOTP secret, encrypted at rest via KMS envelope in production
+  mfaEnabled        Boolean   @default(false)
+  mfaEnforced       Boolean   @default(false) // true for strong-MFA-required roles once they hold such a capacity
+  locale            String    @default("ar")
+
+  // Public professional profile (PRD roadmap Phase 4, brought forward as a
+  // now-current product surface). Off by default — PDPL section 8.4 requires
+  // explicit, informed, freely-given consent before publishing personal data;
+  // a user opts in per profile, not per capacity, and can withdraw any time.
+  publicSlug          String?   @unique
+  publicProfileVisible Boolean  @default(false)
+  headline             String?
+  bio                   String?
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  platformAdmin       PlatformAdmin?
+  capacities           Capacity[]
+  documents            Document[]              @relation("DocumentOwnerUser")
+  uploadedDocuments    Document[]              @relation("DocumentUploadedBy")
+  auditLogEntries      AuditLog[]
+  reviewedVerifications Capacity[]              @relation("CapacityReviewer")
+  interestDeclarations InterestDeclaration[]
+  documentAccessLogs   DocumentAccessLog[]
+  boardElectionCandidacies BoardElectionCandidate[]
+
+  @@index([email])
+}
+
+// ---------- Tenant ----------
+
+model Entity {
+  id                 String     @id @default(cuid())
+  legalName          String
+  registrationNumber String     @unique
+  entityType         EntityType
+  // JSC vs LLC — governs proxy eligibility (spec section 6): JSC
+  // shareholders may appoint any proxy, shareholder or not; LLC
+  // quota-holders may only appoint another quota-holder. Defaults to JSC,
+  // the standard form for FRA-regulated financial entities.
+  legalForm          LegalForm  @default(JSC)
+  regulator          String     @default("FRA")
+  verificationStatus VerificationStatus @default(PENDING)
+
+  // Public company profile. Defaults on — an FRA-regulated entity's legal
+  // name, type, and registration are public record regardless; this only
+  // controls whether Bord publishes a discoverable page for it, not the
+  // underlying governance data (board minutes, votes, remuneration —
+  // never exposed here, only what appears on the private, authenticated
+  // side of this same Entity row).
+  publicSlug     String?  @unique
+  publiclyListed Boolean  @default(true)
+  about          String?
+  website        String?
+
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  capacities           Capacity[]
+  boards               Board[]
+  committees           Committee[]
+  meetings             Meeting[]
+  resolutions          Resolution[]
+  documents            Document[]
+  regulatoryObligations RegulatoryObligation[]
+  ruleOverrides        RegulatoryRuleOverride[]
+  remunerationPolicies RemunerationPolicy[]
+  meetingRequests      MeetingRequest[]
+  auditLogEntries      AuditLog[]
+  minutes              Minutes[]
+  governingDocuments   GoverningDocument[]
+  boardElections       BoardElection[]
+  financialStatements  FinancialStatement[]
+  regulatoryChangeAcknowledgments RegulatoryChangeAcknowledgment[]
+
+  @@index([registrationNumber])
+}
+
+// ---------- Capacity (Epic 1) — time-versioned, resolution-driven ----------
+
+model Capacity {
+  id                   String         @id @default(cuid())
+  userId               String
+  user                 User           @relation(fields: [userId], references: [id])
+  entityId             String
+  entity               Entity         @relation(fields: [entityId], references: [id])
+  role                 GovernanceRole
+  startDate            DateTime
+  endDate              DateTime?
+  appointingResolutionId String?
+  appointingResolution Resolution?    @relation("AppointingResolution", fields: [appointingResolutionId], references: [id])
+
+  // GA capital weight — "one share, one vote" (spec section 6). Only
+  // meaningful for GA_MEMBER capacities; drives both GA quorum-by-capital
+  // and vote weight. Null for non-GA roles (board votes are one-member-one-vote).
+  sharePercentage      Decimal?       @db.Decimal(6, 3)
+
+  // Verification (Epic 2)
+  verificationStatus   VerificationStatus @default(PENDING)
+  verificationReason   String?
+  reviewedByUserId     String?
+  reviewedByUser       User?          @relation("CapacityReviewer", fields: [reviewedByUserId], references: [id])
+  reviewedAt           DateTime?
+
+  // Activation is blocked until verification is APPROVED and disqualification checks clear.
+  active               Boolean        @default(false)
+
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  disqualificationCheck DisqualificationCheck?
+  committeeMemberships  CommitteeMembership[]
+  votes                 Vote[]
+  interestDeclarations  InterestDeclaration[]
+  remunerationRecords   RemunerationRecord[]
+  documents             Document[]     @relation("CapacityDocuments")
+  boardChairOf          Board[]        @relation("BoardChair")
+  meetingAttendances    MeetingAttendance[]
+  proposedAgendaItems   AgendaItem[]   @relation("ProposedAgendaItems")
+  minutesVerifications  MinutesVerification[]
+  gaSecretaryForMeetings Meeting[]     @relation("MeetingGaSecretary")
+  proxiesGranted        Proxy[]        @relation("ProxyGrantor")
+  proxiesReceived       Proxy[]        @relation("ProxyGrantee")
+  cumulativeVoteAllocations CumulativeVoteAllocation[]
+
+  @@index([entityId, role])
+  @@index([userId])
+  @@index([entityId, startDate, endDate])
+}
+
+model DisqualificationCheck {
+  id                          String   @id @default(cuid())
+  capacityId                  String   @unique
+  capacity                    Capacity @relation(fields: [capacityId], references: [id])
+  criminalRecordClear         Boolean?
+  criminalRecordNotes         String?
+  publicSectorApprovalStatus  String? // not_applicable | required_pending | approved
+  competingRoleApprovalStatus String? // not_applicable | required_pending | approved
+  blocksActivation            Boolean  @default(false)
+  checkedAt                   DateTime @default(now())
+  checkedByUserId             String?
+}
+
+// ---------- Governance Structure Builder (Epic 3) ----------
+
+model Board {
+  id               String   @id @default(cuid())
+  entityId         String
+  entity           Entity   @relation(fields: [entityId], references: [id])
+  chairmanCapacityId String?
+  chairmanCapacity Capacity? @relation("BoardChair", fields: [chairmanCapacityId], references: [id])
+  chairMdSeparationExceptionApproved Boolean @default(false) // FRA-disclosed exception (spec section 3)
+  chairMdSeparationJustification     String?
+  lastValidatedAt  DateTime?
+  lastValidationPassed Boolean?
+  // The one bootstrap exception to "every Capacity is resolution-driven"
+  // (PRD 5.2): a brand-new entity has nobody yet holding meeting:schedule /
+  // agenda:set privileges to convene a real meeting. Onboarding creates a
+  // synthetic founding meeting + agenda item so the very first board seats
+  // still go through the Resolution Engine rather than a direct-write
+  // bypass; POST .../board/seed-initial-capacity uses it and closes itself
+  // off once the board has passed its first composition validation.
+  foundingAgendaItemId String?
+  foundingAgendaItem   AgendaItem? @relation(fields: [foundingAgendaItemId], references: [id])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([entityId])
+}
+
+model Committee {
+  id                String        @id @default(cuid())
+  entityId          String
+  entity            Entity        @relation(fields: [entityId], references: [id])
+  name              String
+  type              CommitteeType
+  charterMandate    String
+  quorumRule        String
+  reportingLine     String        @default("BOARD")
+  minIndependentCount Int         @default(0)
+  foundingResolutionId String?
+  foundingResolution   Resolution? @relation("CommitteeFoundingResolution", fields: [foundingResolutionId], references: [id])
+  dissolvedAt       DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  memberships CommitteeMembership[]
+  meetings    Meeting[]
+
+  @@index([entityId])
+}
+
+model CommitteeMembership {
+  id                     String     @id @default(cuid())
+  committeeId            String
+  committee              Committee  @relation(fields: [committeeId], references: [id])
+  capacityId             String
+  capacity               Capacity   @relation(fields: [capacityId], references: [id])
+  isChair                Boolean    @default(false)
+  startDate              DateTime
+  endDate                DateTime?
+  appointingResolutionId String?
+  appointingResolution   Resolution? @relation("CommitteeAppointingResolution", fields: [appointingResolutionId], references: [id])
+  createdAt              DateTime   @default(now())
+
+  @@index([committeeId, startDate, endDate])
+  @@index([capacityId])
+}
+
+// ---------- Resolution Engine (Epic 4) — the center of the system ----------
+
+model Resolution {
+  id                     String            @id @default(cuid())
+  entityId               String
+  entity                 Entity            @relation(fields: [entityId], references: [id])
+  agendaItemId           String?
+  agendaItem             AgendaItem?       @relation(fields: [agendaItemId], references: [id])
+  type                   ResolutionType
+  title                  String
+  description            String
+  requiredMajority        String // e.g. "ABSOLUTE_MAJORITY" | "TWO_THIRDS" | "THREE_QUARTERS" | "UNANIMOUS" | "BOARD_MAJORITY"
+  effectBasis            EffectBasis
+  resolutionDate         DateTime?
+  authorizationDate      DateTime?
+  status                 ResolutionStatus  @default(DRAFT)
+  rollbackReason         String?
+  // Snapshot of the structural state before this resolution applied, for rollback (PRD 5.4 / Epic 4 AC).
+  preResolutionSnapshot  Json?
+  // Decided at creation time (what this resolution DOES if it passes) so
+  // the voting engine's close-and-tally step can apply it automatically
+  // once the required majority is reached — see resolutions/voting.ts.
+  proposedEffect         Json?
+
+  // Multi-stage approval chain (e.g. Financial Statements: Audit Committee
+  // then Board) — each stage is its own real resolution, voted on at its
+  // own body's own meeting. chainStage counts from 1; a resolution with no
+  // configured chain is stage 1 of 1. When a non-terminal stage passes, the
+  // engine creates the next stage linked here rather than finalizing —
+  // see resolveApprovalChain in resolutions/engine.ts.
+  chainStage              Int               @default(1)
+  precedingResolutionId   String?           @unique
+  precedingResolution     Resolution?       @relation("ResolutionChain", fields: [precedingResolutionId], references: [id])
+  succeedingResolution    Resolution?       @relation("ResolutionChain")
+
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  votes                  Vote[]
+  appointedCapacities    Capacity[]        @relation("AppointingResolution")
+  committeeAppointments  CommitteeMembership[] @relation("CommitteeAppointingResolution")
+  foundedCommittees      Committee[]           @relation("CommitteeFoundingResolution")
+  remunerationRecords    RemunerationRecord[]
+  financialStatement     FinancialStatement?
+
+  @@index([entityId, status])
+}
+
+// ---------- Meeting & Conferencing (Epic 5) ----------
+
+model Meeting {
+  id            String        @id @default(cuid())
+  entityId      String
+  entity        Entity        @relation(fields: [entityId], references: [id])
+  committeeId   String?
+  committee     Committee?    @relation(fields: [committeeId], references: [id])
+  type          MeetingType
+  scheduledAt   DateTime
+  location      String?
+  isVirtual     Boolean       @default(false)
+  recordingUrl  String?
+  status        MeetingStatus @default(SCHEDULED)
+  quorumRequiredPct Float?
+  quorumMet     Boolean?
+  closedAt      DateTime?
+  // Once locked (Secretary/Chairman action ahead of the meeting, standing
+  // in for "sent out with the invitations"), no new agenda item may be
+  // added except via the Chairman's mid-meeting flag or a confirmed
+  // 100%-unanimous addition (spec section 5) — see meetings/routes.ts.
+  agendaLockedAt DateTime?
+  // GA meeting roles (spec section 6): every OGM/EGM requires a secretary
+  // and exactly two vote counters, appointed by the meeting chairman —
+  // distinct from the entity's standing Corporate Secretary capacity, which
+  // may or may not be the same person for a given meeting.
+  gaSecretaryCapacityId    String?
+  gaSecretaryCapacity      Capacity? @relation("MeetingGaSecretary", fields: [gaSecretaryCapacityId], references: [id])
+  gaVoteCounterCapacityIds String[]  @default([])
+  // OGM/EGM second meeting after a failed-quorum first meeting (spec
+  // section 6: valid regardless of attendance for OGM; >=25% capital for
+  // EGM) — same notice, no new invitation required.
+  isSecondMeeting Boolean     @default(false)
+  firstMeetingId  String?
+  firstMeeting    Meeting?    @relation("SecondMeetingOf", fields: [firstMeetingId], references: [id])
+  secondMeetings  Meeting[]   @relation("SecondMeetingOf")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  agendaItems     AgendaItem[]
+  attendances     MeetingAttendance[]
+  proxies         Proxy[]
+  minutes         Minutes?
+
+  @@index([entityId, type, scheduledAt])
+}
+
+model AgendaItem {
+  id                String   @id @default(cuid())
+  meetingId         String
+  meeting           Meeting  @relation(fields: [meetingId], references: [id])
+  order             Int
+  title             String
+  description       String?
+  isOffAgendaAddition Boolean @default(false)
+  unanimousAdditionConfirmed Boolean @default(false)
+  // Capacities (attending at the moment they confirmed) that have affirmed
+  // a pending unanimous addition — status flips PROPOSED -> CONFIRMED once
+  // this set covers every currently-attending eligible capacity.
+  unanimousConfirmedByCapacityIds String[] @default([])
+  createdAt         DateTime @default(now())
+
+  // Secretary's agenda-preparation queue: an item set directly by
+  // agenda:set (Chairman/Secretary/etc.) is CONFIRMED immediately; an item
+  // submitted via agenda:propose, or materialized from a MeetingRequest's
+  // initiator-submitted agenda, starts PROPOSED and waits for the
+  // Secretary/Chairman to confirm or reject it into the final agenda.
+  status                AgendaItemStatus @default(CONFIRMED)
+  proposedByCapacityId  String?
+  proposedByCapacity    Capacity?        @relation("ProposedAgendaItems", fields: [proposedByCapacityId], references: [id])
+  meetingRequestId      String?
+  meetingRequest        MeetingRequest?  @relation(fields: [meetingRequestId], references: [id])
+  rejectionReason       String?
+  reviewedByUserId      String?
+  reviewedAt            DateTime?
+
+  // Compliance-assistant review against applicable law (RegulatoryRule) and
+  // the entity's own governing documents (GoverningDocument) — see
+  // agenda/review.ts. Re-runnable on demand; the most recent run is cached
+  // here so the Secretary's review queue doesn't recompute on every list.
+  complianceFlags       Json?
+
+  // Set when this item was proposed by the hiring workflow (a company
+  // "hiring" a professional network member) — the appointment/committee
+  // effect to hand to createResolution once the Secretary confirms this
+  // item, so the intended role isn't re-typed and can't drift from what
+  // was actually offered. See hiring/routes.ts.
+  suggestedResolutionEffect Json?
+  complianceReviewedAt  DateTime?
+
+  resolutions Resolution[]
+  documents   Document[]
+  foundingForBoard Board[]
+  boardElection BoardElection?
+
+  @@index([meetingId])
+  @@index([meetingId, status])
+}
+
+// ---------- Cumulative voting for board elections (spec section 6, 2018
+// Companies Law amendment) ----------
+//
+// Genuinely different from the Resolution/Vote FOR-AGAINST-ABSTAIN-RECUSED
+// model above: each GA member's voting power for the whole election is
+// their shares times the number of open seats, freely allocable across
+// candidates (concentrated on one or split), specifically so a minority
+// shareholder can concentrate enough votes to guarantee at least one seat —
+// not a per-candidate up/down vote. See elections/engine.ts.
+enum BoardElectionStatus {
+  OPEN
+  CLOSED
+}
+
+model BoardElection {
+  id           String              @id @default(cuid())
+  entityId     String
+  entity       Entity              @relation(fields: [entityId], references: [id])
+  agendaItemId String              @unique
+  agendaItem   AgendaItem          @relation(fields: [agendaItemId], references: [id])
+  seatsOpen    Int
+  status       BoardElectionStatus @default(OPEN)
+  closedAt     DateTime?
+  createdAt    DateTime            @default(now())
+
+  candidates  BoardElectionCandidate[]
+  allocations CumulativeVoteAllocation[]
+
+  @@index([entityId, status])
+}
+
+model BoardElectionCandidate {
+  id           String        @id @default(cuid())
+  electionId   String
+  election     BoardElection @relation(fields: [electionId], references: [id])
+  userId       String
+  user         User          @relation(fields: [userId], references: [id])
+  proposedRole GovernanceRole
+  elected      Boolean       @default(false)
+  appointingResolutionId String?
+
+  allocations CumulativeVoteAllocation[]
+
+  @@unique([electionId, userId])
+  @@index([electionId])
+}
+
+model CumulativeVoteAllocation {
+  id              String                  @id @default(cuid())
+  electionId      String
+  election        BoardElection           @relation(fields: [electionId], references: [id])
+  candidateId     String
+  candidate       BoardElectionCandidate  @relation(fields: [candidateId], references: [id])
+  voterCapacityId String
+  voterCapacity   Capacity                @relation(fields: [voterCapacityId], references: [id])
+  votes           Float
+  updatedAt       DateTime                @updatedAt
+
+  @@unique([candidateId, voterCapacityId])
+  @@index([electionId, voterCapacityId])
+}
+
+model MeetingAttendance {
+  id             String         @id @default(cuid())
+  meetingId      String
+  meeting        Meeting        @relation(fields: [meetingId], references: [id])
+  capacityId     String
+  capacity       Capacity       @relation(fields: [capacityId], references: [id])
+  mode           AttendanceMode
+  rsvpAt         DateTime?
+  checkedInAt    DateTime?
+
+  @@unique([meetingId, capacityId])
+}
+
+model Proxy {
+  id                    String   @id @default(cuid())
+  meetingId             String
+  meeting               Meeting  @relation(fields: [meetingId], references: [id])
+  grantorCapacityId     String
+  grantorCapacity       Capacity @relation("ProxyGrantor", fields: [grantorCapacityId], references: [id])
+  granteeCapacityId     String
+  granteeCapacity       Capacity @relation("ProxyGrantee", fields: [granteeCapacityId], references: [id])
+  scope                 String   @default("FULL")
+  expiresAt             DateTime?
+  createdAt             DateTime @default(now())
+
+  votes Vote[]
+
+  @@index([meetingId])
+}
+
+model Vote {
+  id               String      @id @default(cuid())
+  resolutionId     String
+  resolution       Resolution  @relation(fields: [resolutionId], references: [id])
+  voterCapacityId  String?
+  voterCapacity    Capacity?   @relation(fields: [voterCapacityId], references: [id])
+  proxyId          String?
+  proxy            Proxy?      @relation(fields: [proxyId], references: [id])
+  value            VoteValue
+  recusalReason    String?
+  excludedByLaw    Boolean     @default(false) // Art. 74 own-matter hard exclusion
+  weight           Float       @default(1)
+  timestamp        DateTime    @default(now())
+
+  @@unique([resolutionId, voterCapacityId])
+  @@index([resolutionId])
+}
+
+// Board/GA minutes — auto-generated from agenda, attendance, and vote
+// records, circulated, dual-signed (chairman + secretary), then submitted
+// to the FRA (10 days) and, for OGM/EGM, GAFI (1 month). Directory search
+// (by date range, keyword, discussion point) reads this table directly.
+model Minutes {
+  id                 String        @id @default(cuid())
+  meetingId          String        @unique
+  meeting            Meeting       @relation(fields: [meetingId], references: [id])
+  entityId           String
+  entity             Entity        @relation(fields: [entityId], references: [id])
+  content            String // full narrative text, generated then editable up to signature
+  discussionPoints   Json // [{ agendaItemId, title, notes }] — per-item discussion, searchable
+  keywords           String[]
+  status             MinutesStatus @default(DRAFT)
+  chairmanSignedAt   DateTime?
+  chairmanSignedByUserId String?
+  secretarySignedAt  DateTime?
+  secretarySignedByUserId String?
+  submittedToFraAt   DateTime?
+  submittedToGafiAt  DateTime?
+  circulatedAt       DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  verifications MinutesVerification[]
+
+  @@index([entityId, createdAt])
+}
+
+// Member verification of a circulated minutes draft — the gate between
+// DRAFT/CIRCULATED and signature. One row per attendee capacity per minutes
+// revision; a fresh POST .../minutes regeneration (after CHANGES_REQUESTED)
+// clears prior rows, since they verified content that no longer exists.
+model MinutesVerification {
+  id          String            @id @default(cuid())
+  minutesId   String
+  minutes     Minutes           @relation(fields: [minutesId], references: [id])
+  capacityId  String
+  capacity    Capacity          @relation(fields: [capacityId], references: [id])
+  decision    VerificationDecision
+  comments    String?
+  createdAt   DateTime          @default(now())
+
+  @@unique([minutesId, capacityId])
+  @@index([minutesId])
+}
+
+enum VerificationDecision {
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+model MeetingRequest {
+  id                String                @id @default(cuid())
+  entityId          String
+  entity            Entity                @relation(fields: [entityId], references: [id])
+  type              MeetingRequestType
+  requestorCapacityIds String[]
+  capitalOrMemberPct Float?
+  thresholdMet      Boolean               @default(false)
+  status            MeetingRequestStatus  @default(PENDING)
+  responseDeadline  DateTime
+  chairmanRespondedAt DateTime?
+  resultingMeetingId String?
+  // The initiator's own agenda, submitted alongside the request — e.g.
+  // "[{title, description}]". Lightweight JSON rather than real AgendaItem
+  // rows, since no Meeting exists yet to attach them to; markMeetingRequestCalled
+  // materializes each entry into a PROPOSED AgendaItem once a meetingId is
+  // assigned, so it lands in the Secretary's normal review queue.
+  proposedAgenda    Json?
+  createdAt         DateTime              @default(now())
+
+  materializedAgendaItems AgendaItem[]
+
+  @@index([entityId, status])
+}
+
+model InterestDeclaration {
+  id              String   @id @default(cuid())
+  capacityId      String
+  capacity        Capacity @relation(fields: [capacityId], references: [id])
+  declaredByUserId String
+  declaredByUser  User     @relation(fields: [declaredByUserId], references: [id])
+  relatedEntityName String
+  natureOfInterest  String
+  dateDeclared    DateTime @default(now())
+  active          Boolean  @default(true)
+
+  @@index([capacityId, active])
+}
+
+// ---------- Remuneration (Epic 8) ----------
+
+model RemunerationPolicy {
+  id             String                 @id @default(cuid())
+  entityId       String
+  entity         Entity                 @relation(fields: [entityId], references: [id])
+  type           RemunerationPolicyType
+  approvingBody  ApprovingBody
+  capCalculationBasis String?
+  currentVersion Int                    @default(1)
+  createdAt      DateTime               @default(now())
+
+  records RemunerationRecord[]
+
+  @@index([entityId, type])
+}
+
+model RemunerationRecord {
+  id                   String                @id @default(cuid())
+  capacityId           String
+  capacity             Capacity              @relation(fields: [capacityId], references: [id])
+  policyId             String
+  policy               RemunerationPolicy    @relation(fields: [policyId], references: [id])
+  component            RemunerationComponent
+  amount               Decimal               @db.Decimal(18, 2)
+  approvingResolutionId String
+  approvingResolution  Resolution            @relation(fields: [approvingResolutionId], references: [id])
+  effectiveDate        DateTime
+  createdAt            DateTime              @default(now())
+
+  payouts Payout[]
+
+  @@index([capacityId])
+}
+
+// The net-distributable-profit figure a FINANCIAL_STATEMENTS_APPROVAL
+// resolution establishes for a fiscal year — the base the 10% board
+// remuneration cap (RegulatoryRule
+// BOARD_REMUNERATION_CAP_PCT_OF_NET_DISTRIBUTABLE_PROFIT) is computed
+// against. One per entity per fiscal year; a later approval for the same
+// year supersedes the figure (e.g. restated accounts).
+model FinancialStatement {
+  id                     String   @id @default(cuid())
+  entityId               String
+  entity                 Entity   @relation(fields: [entityId], references: [id])
+  fiscalYear             Int
+  netDistributableProfit Decimal  @db.Decimal(18, 2)
+  approvingResolutionId  String   @unique
+  approvingResolution    Resolution @relation(fields: [approvingResolutionId], references: [id])
+  createdAt              DateTime @default(now())
+
+  @@unique([entityId, fiscalYear])
+  @@index([entityId])
+}
+
+model Payout {
+  id                   String       @id @default(cuid())
+  remunerationRecordId String
+  remunerationRecord   RemunerationRecord @relation(fields: [remunerationRecordId], references: [id])
+  amount               Decimal      @db.Decimal(18, 2)
+  dueDate              DateTime
+  paymentMethod        String?
+  paymentReference     String?
+  status               PayoutStatus @default(SCHEDULED)
+  withheldTaxAmount    Decimal      @default(0) @db.Decimal(18, 2)
+  nonDeductibleTaxTag  Boolean      @default(false)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  @@index([remunerationRecordId, status])
+}
+
+// ---------- Regulatory Calendar (Epic 6) & Change Monitoring (Epic 7) ----------
+
+model RegulatoryObligation {
+  id             String                     @id @default(cuid())
+  entityId       String
+  entity         Entity                     @relation(fields: [entityId], references: [id])
+  type           RegulatoryObligationType
+  frequencyDays  Int?
+  triggerPoint   String
+  lastCompletedAt DateTime?
+  nextDueAt      DateTime
+  status         RegulatoryObligationStatus @default(PENDING)
+  responsibleRole GovernanceRole
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+
+  @@index([entityId, nextDueAt])
+}
+
+model RegulatoryRule {
+  id             String   @id @default(cuid())
+  ruleKey        String   @unique // e.g. "OGM_NOTICE_PERIOD_DAYS", "BOARD_GENDER_QUOTA_PCT"
+  description    String
+  currentValue   Json
+  legalCitation  String
+  sourceDocument String?
+  version        Int      @default(1)
+  effectiveFrom  DateTime @default(now())
+  reviewedByUserId String?
+  createdAt      DateTime @default(now())
+
+  overrides RegulatoryRuleOverride[]
+}
+
+model RegulatoryRuleOverride {
+  id         String              @id @default(cuid())
+  entityId   String
+  entity     Entity              @relation(fields: [entityId], references: [id])
+  ruleId     String
+  rule       RegulatoryRule      @relation(fields: [ruleId], references: [id])
+  value      Json
+  status     RuleOverrideStatus  @default(CUSTOM_OVERRIDE)
+  citation   String?
+  createdAt  DateTime            @default(now())
+
+  @@unique([entityId, ruleId])
+}
+
+// A GAFI/FRA circular or other regulatory change, recorded by a human
+// reviewer (spec section 7: "Regulatory Change Monitoring" — deliberately
+// manual/lightweight, not an automated scan; there's no scraper or feed
+// integration in this build, see regulatory/routes.ts). Platform-wide, like
+// RegulatoryRule — a change in the law applies to every entity, not one.
+model RegulatoryChangeNotice {
+  id                String   @id @default(cuid())
+  title             String
+  description       String
+  legalCitation     String
+  sourceDocument    String?
+  effectiveDate     DateTime
+  // RegulatoryRule.ruleKey values this change affects, if any — lets a
+  // Compliance Officer jump straight from the notice to the rule(s) it
+  // touches without them needing to already know which ones.
+  affectedRuleKeys  String[]
+  publishedByUserId String
+  createdAt         DateTime @default(now())
+
+  acknowledgments RegulatoryChangeAcknowledgment[]
+}
+
+// One entity's Compliance Officer (or Corporate Secretary) confirming
+// they've reviewed a notice — the actual "monitoring" record: not that the
+// platform detected the change (a human did), but that each entity has
+// demonstrably seen and dealt with it, per entity, timestamped.
+model RegulatoryChangeAcknowledgment {
+  id                 String                 @id @default(cuid())
+  noticeId           String
+  notice             RegulatoryChangeNotice @relation(fields: [noticeId], references: [id])
+  entityId           String
+  entity             Entity                 @relation(fields: [entityId], references: [id])
+  acknowledgedByUserId String
+  acknowledgedAt     DateTime               @default(now())
+
+  @@unique([noticeId, entityId])
+  @@index([entityId])
+}
+
+// ---------- Governing documents (agenda compliance review) ----------
+
+// The entity's own constitutive/contractual documents — Articles of
+// Association, Bylaws, Shareholders' Agreements, and other agreements,
+// covenants, or warrants — stored as extracted plain text (not a
+// storageKey pointer like Document, since the review engine in
+// agenda/review.ts needs to actually read the content, and the real
+// object-storage integration Document.storageKey assumes isn't built).
+// Small governing documents are the same category of "text worth keeping
+// directly in Postgres" as Minutes.content already is.
+model GoverningDocument {
+  id               String                @id @default(cuid())
+  entityId         String
+  entity           Entity                @relation(fields: [entityId], references: [id])
+  type             GoverningDocumentType
+  title            String
+  content          String
+  // Default citation prefix for flags raised against this document, e.g.
+  // "AoA Art. 12" — appended with the matched excerpt at review time.
+  citation         String?
+  effectiveFrom    DateTime              @default(now())
+  uploadedByUserId String
+  createdAt        DateTime              @default(now())
+
+  @@index([entityId, type])
+}
+
+// ---------- Document Management (Epic 10) ----------
+
+model Document {
+  id                 String              @id @default(cuid())
+  ownerType          DocumentOwnerType
+  ownerUserId        String?
+  ownerUser          User?               @relation("DocumentOwnerUser", fields: [ownerUserId], references: [id])
+  entityId           String?
+  entity             Entity?             @relation(fields: [entityId], references: [id])
+  capacityId         String?
+  capacity           Capacity?           @relation("CapacityDocuments", fields: [capacityId], references: [id])
+  agendaItemId       String?
+  agendaItem         AgendaItem?         @relation(fields: [agendaItemId], references: [id])
+  type               DocumentType
+  storageKey         String // pointer into encrypted object storage, per-entity isolated prefix
+  verificationStatus VerificationStatus  @default(PENDING)
+  verificationReason String?
+  reviewedByUserId   String?
+  reviewedAt         DateTime?
+  uploadedByUserId   String
+  uploadedByUser     User                @relation("DocumentUploadedBy", fields: [uploadedByUserId], references: [id])
+  createdAt          DateTime            @default(now())
+
+  accessLogs DocumentAccessLog[]
+
+  @@index([entityId])
+  @@index([ownerUserId])
+}
+
+model DocumentAccessLog {
+  id          String   @id @default(cuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  action      String // viewed | downloaded
+  timestamp   DateTime @default(now())
+
+  @@index([documentId, timestamp])
+}
+
+// ---------- Audit Log (append-only, tamper-evident) ----------
+
+// One row per hash-chain (per entity, plus one PLATFORM chain for
+// entity-less actions). Locked with SELECT ... FOR UPDATE when appending so
+// concurrent writers can't race on computing prevHash.
+model AuditChainHead {
+  chainKey String @id
+  lastHash String
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  entityId     String?
+  entity       Entity?  @relation(fields: [entityId], references: [id])
+  actorUserId  String?
+  actor        User?    @relation(fields: [actorUserId], references: [id])
+  action       String
+  tableName    String
+  recordId     String?
+  beforeData   Json?
+  afterData    Json?
+  prevHash     String?
+  hash         String
+  createdAt    DateTime @default(now())
+
+  @@index([entityId, createdAt])
+  @@index([tableName, recordId])
+}

@@ -1,0 +1,16 @@
+{
+  "name": "bord-governance-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Governance platform for FRA-regulated non-bank financial entities (Phase 1)",
+  "scripts": {
+    "dev:api": "pnpm --filter @bord/api dev",
+    "dev:web": "pnpm --filter @bord/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "prisma:generate": "pnpm --filter @bord/api prisma:generate",
+    "prisma:migrate": "pnpm --filter @bord/api prisma:migrate",
+    "seed": "pnpm --filter @bord/api seed"
+  }
+}

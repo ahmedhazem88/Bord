@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /entities/
+Disallow: /login
+Disallow: /register
+
+# sitemap.xml is served dynamically by the API (see apps/api/src/public/routes.ts).
+# In production, proxy <this-site>/sitemap.xml to the API's GET /sitemap.xml so
+# the path below resolves at the site root.
+Sitemap: /sitemap.xml
