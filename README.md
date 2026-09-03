@@ -104,11 +104,18 @@ This is the Phase 1 architectural foundation, built in build-sequence order (PRD
   `GET .../remuneration-cap-status` (`src/resolutions/engine.ts`, `src/remuneration/routes.ts`).
   Tax-withholding auto-computation is explicitly NOT built: it needs the actual applicable Egyptian
   withholding rate as a cited legal fact, which nothing given to this session specifies — `Payout`
-  still carries a manually-set `withheldTaxAmount` (defaults to 0), same as before.
-- **Scaffolded, not complete**: Regulatory Change Monitoring's scheduled scan (Epic 7) and Document
-  Management's object storage (Epic 10) are unbuilt. No frontend screens yet for the Epic 5/6/8
-  endpoints (voting, minutes directory, compliance search, elections, interest declarations,
-  remuneration cap status) or for the agenda preparation tool, governing-documents library, and
+  still carries a manually-set `withheldTaxAmount` (defaults to 0), same as before. Epic 7
+  (Regulatory Change Monitoring) is real too, in its deliberately manual/lightweight form the spec
+  allows: no automated GAFI/FRA scan (no scraper/feed integration exists, or is specified, in this
+  build), but a platform reviewer now publishes a `RegulatoryChangeNotice` (cited like every other
+  legal fact here) that every entity sees on a platform-wide feed, and each entity's Compliance
+  Officer/Corporate Secretary must explicitly, idempotently acknowledge — a real per-entity
+  monitoring record, not a log of who the platform notified (`src/regulatory/routes.ts`).
+- **Scaffolded, not complete**: Document Management's object storage (Epic 10) is unbuilt — it needs
+  a real cloud storage/KMS credential this environment doesn't have, same category as the
+  e-signature CSP integration. No frontend screens yet for the Epic 5/6/7/8 endpoints (voting,
+  minutes directory, compliance search, elections, interest declarations, remuneration cap status,
+  regulatory change notices) or for the agenda preparation tool, governing-documents library, and
   minutes circulation/verification — all API-only so far, verified
   via live end-to-end smoke tests rather than a UI. Virtual-attendance recording-retention
   enforcement, and the OGM/EGM invitation mechanics (newspaper publication, registered mail, GAFI/FRA
