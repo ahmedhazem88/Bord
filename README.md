@@ -36,5 +36,3 @@ Copy each package's `.env.example` to `.env` and fill in real values before runn
 ## Status
 
 This is a scaffold produced from a ground-up v4 PRD/architecture pass, rebuilt from a consolidated master requirements prompt with a fresh regulatory and competitive research pass. Structure and data-model stubs only, no working application logic yet (lifecycle phase 5 of 9, see PRD.md Section 16). The prior iterative draft is preserved outside this project for reference.
-
-**Note on this checkout:** `PRD.md` is referenced throughout the documents above (personas, journeys, functional requirement numbers, the Section 5 legal-confidence findings) but is not yet present in this repository; every `PRD.md` cross-reference in these docs was carried over from the source architecture pass and has not been independently re-verified against `PRD.md`'s text in this checkout. Treat any `PRD.md`-sourced claim as unconfirmed until that file is added.
